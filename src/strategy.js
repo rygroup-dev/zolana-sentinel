@@ -127,10 +127,11 @@ function questMetrics(player) {
     placed: cs.filter(isPlaced).length,
     creatures_owned: cs.length,
     gold: Number(account.gold || 0),
-    // relics_equipped is not exposed in player/load; treat "owns a relic" as the
-    // gating proxy so we only attempt when there's plausibly something to equip.
-    relics_equipped: list(player?.relics).filter((r) => r?.equipped).length
-      || (account.equipped_relic ? 1 : 0),
+    // A relic is equipped when it references a creature via `equipped_on` (the real
+    // field in player/load) — the legacy `equipped`/`equipped_relic` flags never
+    // exist, so counting them silently skipped the d_equip daily (+150 acct XP).
+    relics_equipped: list(player?.relics)
+      .filter((r) => r?.equipped_on || r?.equip_slot || r?.equipped).length,
     species_owned: species.size,
     account_level: Number(account.level || 1),
     relics_owned: list(player?.relics).length,
