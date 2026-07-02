@@ -40,7 +40,28 @@ Zolana Sentinel plays the game for you — around the clock. It reverse-engineer
 curl -fsSL https://raw.githubusercontent.com/rygroup-dev/zolana-sentinel/main/install.sh | bash
 ```
 
-Installs Node.js (if missing), clones the repo, installs all dependencies, and scaffolds `.env`.
+The installer:
+
+1. Installs Node.js (if missing) and clones the repo.
+2. Installs all npm dependencies.
+3. **Interactively prompts** for the three things it needs and writes them to `.env`:
+   - 🔑 **Wallet private key** (base58 or JSON array — entered hidden)
+   - 🤖 **Telegram bot token** (from [@BotFather](https://t.me/BotFather))
+   - 🆔 **Telegram chat id** (your numeric Telegram ID)
+
+```
+  ┌────────────────────────────────────────────────┐
+  │            ⚡  Z O L A N A   S E N T I N E L      │
+  │        Autonomous bot for play.zolana.gg         │
+  │                    by rygroup                    │
+  └────────────────────────────────────────────────┘
+
+  Wallet private key (base58 or JSON array): ********
+  Telegram bot token (from @BotFather): 1234:AA...
+  Telegram chat id (your numeric ID): 12345678
+```
+
+Your credentials are stored **locally** in `.env` (chmod 600) and are never uploaded.
 
 <details>
 <summary>Manual install</summary>
@@ -100,11 +121,22 @@ journalctl -u zolana-sentinel -f
 
 ## 📲 Telegram Control
 
-Message your bot and use the inline dashboard or slash commands:
+Message your bot and use the inline dashboard or slash commands. `/help` lists them all.
 
-`/status` · `/wallet` · `/profit` · `/inventory` · `/creature` · `/dungeon` · `/gacha` · `/eggs` · `/fund` · `/auto` (per-module toggles) · `/help`
+| Group | Commands |
+| --- | --- |
+| **Overview** | `/status` · `/wallet` · `/profit` · `/inventory` · `/creature` · `/stats` |
+| **Actions** | `/dungeon` · `/evolve` · `/breed` · `/companion` · `/relic` · `/epoch` · `/pvp` |
+| **Rewards** | `/claim` · `/daily` · `/quests` · `/gemcraft` · `/afk` |
+| **Economy** | `/gacha` · `/eggs` · `/buyegg` · `/store` · `/slot` · `/market` · `/listings` · `/fund` |
+| **Control** | `/auto` (per-module toggles) · `/once` · `/pause` · `/resume` |
+| **Wallet ops** | `/deposit` · `/sendfee` · `/sendzolana` · `/withdrawal` · `/sweep` · `/genwallet` |
 
 Every autopilot module can be toggled live from the `/auto` panel.
+
+### 💤 Going offline
+
+The bot keeps the account in the **AFK zone** automatically, so it keeps farming gold + stamina even while your PC is off. Before shutting down you can also tap **`/afk`** to bank pending rewards and confirm the AFK zone is active.
 
 ## 🧠 How It Works
 
