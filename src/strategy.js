@@ -816,6 +816,30 @@ export class StrategyEngine {
     }
   }
 
+  // Opt-in ($ZOLANA spend, default OFF): when stamina is drained, buy a full restore so
+  // raiding resumes immediately instead of waiting ~22h for regen (1 stamina / 8.9 min).
+  // Hard daily cap + reserve guard (inside staminaRestore) so it can never runaway-drain
+  // the wallet. Real on-chain transfer — only fires with ZOLANA_REAL_RUN.
+  async autoBuyStamina(player, stamina) {
+    if (!this.toggle('autostamina', config.ZOLANA_AUTO_STAMINA)) return;
+    if (!config.ZOLANA_REAL_RUN) return;
+    if (this.actionsThisCycle >= config.ZOLANA_MAX_ACTIONS_PER_CYCLE) return;
+    if (stamina >= Math.min(...REGION_STAMINA)) return; // only when truly drained
+    const day = Math.floor(Date.now() / 86400000);
+    const rec = this.state.data.autoStamina?.day === day
+      ? this.state.data.autoStamina : { day, count: 0 };
+    if (rec.count >= config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY) { this.state.data.autoStamina = rec; return; }
+    this.actionsThisCycle += 1;
+    const res = await this.safeAct('autoStamina', () => this.client.staminaRestore('full'));
+    if (res) {
+      rec.count += 1;
+      logger.info({ buysToday: rec.count, cost: config.ZOLANA_STAMINA_ZENKO_COST }, 'auto-bought stamina');
+      this.queueNotify({ text: `⚡ <b>Auto-bought full stamina</b> for ${config.ZOLANA_STAMINA_ZENKO_COST} $ZOLANA — resuming raids. (${rec.count}/${config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY} today)` });
+    }
+    this.state.data.autoStamina = rec;
+    this.state.save();
+  }
+
   // Read-only phase for this cycle (does not persist — dungeonRun owns the write). Lets
   // placement know whether the strongest are farming (FARM) or being drafted to raid.
   raidPhaseNow(player) {
@@ -863,7 +887,11 @@ export class StrategyEngine {
     this.state.save();
 
     // FARM phase → no raids; optimizePlacement already farms the strongest for gold.
-    if (phase.phase === 'farm') return;
+    // Optionally auto-buy stamina ($ZOLANA) to resume raiding instead of waiting ~22h.
+    if (phase.phase === 'farm') {
+      await this.autoBuyStamina(player, stamina);
+      return;
+    }
 
     // RAID phase → fire the strongest creatures in PARALLEL bursts (server allows many
     // concurrent runs), each party climbing to the highest floor its DETECTED power can

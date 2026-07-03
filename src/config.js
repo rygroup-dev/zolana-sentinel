@@ -34,6 +34,10 @@ const schema = z.object({
   ZOLANA_TREASURY: z.string().default('Auywa2xpfcTaBmfzNCLXSLTM5kzBh9kwjuABHY2usVNC'),
   // Stamina restore ("Stamina Elixir") cost in whole $ZOLANA → refills to full (180).
   ZOLANA_STAMINA_ZENKO_COST: z.coerce.number().int().min(1).default(50),
+  // Auto-buy stamina ($ZOLANA) when drained so raids resume immediately (default OFF —
+  // it spends token). Hard daily cap bounds the max spend (default 4 × 50 = 200/day).
+  ZOLANA_AUTO_STAMINA: z.coerce.boolean().default(false),
+  ZOLANA_AUTO_STAMINA_MAX_PER_DAY: z.coerce.number().int().min(0).default(4),
   ZOLANA_AUTO_MARKET: z.coerce.boolean().default(true),
   ZOLANA_AUTO_MARKET_BUY: z.coerce.boolean().default(true),
   ZOLANA_AUTO_MARKET_SELL: z.coerce.boolean().default(true),

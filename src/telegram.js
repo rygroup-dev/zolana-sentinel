@@ -176,6 +176,7 @@ export class TelegramBot {
         ],
         [
           row('BuyEgg💰', 'buyegg', config.ZOLANA_AUTO_BUY_EGG),
+          row('AutoStam⚡', 'autostamina', config.ZOLANA_AUTO_STAMINA),
         ],
         [
           row('Relic', 'relic', config.ZOLANA_AUTO_RELIC),

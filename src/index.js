@@ -62,7 +62,7 @@ async function main() {
   } while (true);
 }
 
-const AUTO_KEYS = new Set(['afk', 'claims', 'quests', 'dungeon', 'evolve', 'breed', 'gacha', 'premiumEgg', 'gemcraft', 'buyegg', 'relic', 'relicEnhance', 'companion', 'epoch', 'pvp', 'slots', 'marketBuy', 'marketSell']);
+const AUTO_KEYS = new Set(['afk', 'claims', 'quests', 'dungeon', 'evolve', 'breed', 'gacha', 'premiumEgg', 'gemcraft', 'buyegg', 'autostamina', 'relic', 'relicEnhance', 'companion', 'epoch', 'pvp', 'slots', 'marketBuy', 'marketSell']);
 const AUTO_DEFAULTS = {
   afk: config.ZOLANA_AUTO_AFK,
   claims: config.ZOLANA_AUTO_CLAIMS,
@@ -74,6 +74,7 @@ const AUTO_DEFAULTS = {
   premiumEgg: config.ZOLANA_AUTO_PREMIUM_EGG,
   gemcraft: config.ZOLANA_AUTO_GEMCRAFT,
   buyegg: config.ZOLANA_AUTO_BUY_EGG,
+  autostamina: config.ZOLANA_AUTO_STAMINA,
   relic: config.ZOLANA_AUTO_RELIC,
   relicEnhance: config.ZOLANA_AUTO_RELIC_ENHANCE,
   companion: config.ZOLANA_AUTO_COMPANION,
@@ -392,6 +393,7 @@ async function handleCommand(command, tg, engine, state) {
 
       const stam = await readStamina();
       const bal = await client.wallet.tokenBalance().catch(() => null);
+      const autoOn = engine.toggle('autostamina', AUTO_DEFAULTS.autostamina);
       return tg.notify([
         '⚡ <b>Buy Stamina</b>',
         '━━━━━━━━━━━━━━━━━━━━',
@@ -399,12 +401,17 @@ async function handleCommand(command, tg, engine, state) {
         `💰 Cost: <b>${esc(fmtN(cost))}</b> $ZOLANA → <b>full</b> stamina (raid fuel)`,
         bal ? `👛 Your $ZOLANA: <b>${esc(fmtN(Math.floor(bal.uiAmount)))}</b>` : '',
         '',
-        '⚠️ Sends a real on-chain transaction — manual only (no autopilot).',
-        'Tap to confirm:',
+        `🤖 Auto-buy when drained: <b>${autoOn ? '🟢 ON' : '🔴 OFF'}</b> (max ${esc(config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY)}/day)`,
+        autoOn
+          ? 'Bot will auto-refill stamina to keep raiding, up to the daily cap.'
+          : 'Turn ON to auto-refill + keep raiding (spends $ZOLANA — capped per day).',
+        '',
+        '⚠️ Real on-chain transaction.',
       ].filter(Boolean).join('\n'), {
         reply_markup: {
           inline_keyboard: [
-            [{ text: `⚡ Buy Full Stamina · ${fmtN(cost)} $ZOLANA`, callback_data: '/buystamina CONFIRM' }],
+            [{ text: `⚡ Buy Full Now · ${fmtN(cost)} $ZOLANA`, callback_data: '/buystamina CONFIRM' }],
+            [{ text: autoOn ? '🔴 Turn Auto-buy OFF' : '🟢 Turn Auto-buy ON', callback_data: '/toggle autostamina' }],
             [{ text: '⬅️ Back', callback_data: '/start' }],
           ],
         },
