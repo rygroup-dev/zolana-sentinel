@@ -394,6 +394,70 @@ async function handleCommand(command, tg, engine, state) {
       ].filter(Boolean).join('\n'), menuMarkup);
     }
 
+    case '/buygems': {
+      // Buy gems from the marketplace with $ZOLANA. Buying is NOT level-gated
+      // (only SELLING needs Level 8), so this works at any level.
+      const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
+      const fmtUsd = (n) => `$${Number(n || 0).toFixed(Number(n) < 0.001 ? 6 : 2)}`;
+      const gm = await client.market('gem').catch((e) => ({ error: e.message }));
+      if (gm?.error) return tg.notify(`💎 Market fetch failed: <code>${esc(gm.error)}</code>`, menuMarkup);
+      const price = Number(gm.zolanaPriceUsd || 0);
+      const listings = (Array.isArray(gm.listings) ? gm.listings : [])
+        .filter((l) => l.status === 'active' && l.item_kind === 'gem'
+          && l.seller !== client.wallet.publicKey && Number(l.quantity) > 0)
+        .map((l) => ({ id: l.id, qty: Number(l.quantity), usd: Number(l.price_usd) }))
+        .map((l) => ({ ...l, unit: l.usd / Math.max(1, l.qty) }))
+        .sort((a, b) => a.unit - b.unit);
+
+      // --- Buy path: /buygems <listingId> CONFIRM ---
+      if (args[1] === 'CONFIRM' && args[0]) {
+        const chosen = listings.find((l) => l.id === args[0]);
+        if (!chosen) return tg.notify('💎 That listing is gone (sold/expired). Send <code>/buygems</code> for the live list.', menuMarkup);
+        const quote = await client.marketQuote(args[0]).catch((e) => ({ error: e.message }));
+        if (quote?.error) return tg.notify(`💎 Quote failed: <code>${esc(quote.error)}</code>`, menuMarkup);
+        const dec = Number(quote.decimals || 6);
+        const costZ = Number(BigInt(quote.zolanaTotal)) / 10 ** dec;
+        const bal = await client.wallet.tokenBalance().catch(() => null);
+        if (bal && bal.uiAmount - costZ < config.ZOLANA_MARKET_ZOLANA_RESERVE) {
+          return tg.notify(`💎 Not enough $ZOLANA: need <b>${esc(fmtN(Math.ceil(costZ)))}</b> + reserve <b>${esc(fmtN(config.ZOLANA_MARKET_ZOLANA_RESERVE))}</b>, balance <b>${esc(fmtN(Math.floor(bal.uiAmount)))}</b>.`, menuMarkup);
+        }
+        await tg.notify(`💎 Buying <b>${esc(chosen.qty)}</b> gems for <b>${esc(fmtN(Math.round(costZ)))}</b> $ZOLANA (${esc(fmtUsd(chosen.usd))})…`);
+        const res = await client.marketBuyWithQuote(quote).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`💎 Buy failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        state.count('buygems'); state.save();
+        let gemsNow = null;
+        try { gemsNow = Number((await client.loadPlayer())?.player?.gems); } catch { /* snapshot best-effort */ }
+        logger.info({ listing: chosen.id, gems: chosen.qty, spentZolana: Math.round(costZ) }, 'gems bought on market');
+        return tg.notify([
+          '💎 <b>GEMS PURCHASED</b>',
+          '━━━━━━━━━━━━━━━━━━━━',
+          `+<b>${esc(chosen.qty)}</b> gems for <b>${esc(fmtN(Math.round(costZ)))}</b> $ZOLANA (${esc(fmtUsd(chosen.usd))})`,
+          gemsNow != null ? `💎 Balance now: <b>${esc(gemsNow)}</b> gems` : '',
+          'Spend them on /gacha or /eggs.',
+        ].filter(Boolean).join('\n'), menuMarkup);
+      }
+
+      // --- List path: show the gem shop with clear prices ---
+      if (!listings.length) return tg.notify('💎 No gems on the market right now — try again later.', menuMarkup);
+      const bal = await client.wallet.tokenBalance().catch(() => null);
+      const lines = [
+        '<b>💎 BUY GEMS</b> — pay with your $ZOLANA (no Level 8 needed)',
+        '━━━━━━━━━━━━━━━━━━━━',
+        bal ? `🪙 Your $ZOLANA: <b>${esc(fmtN(Math.floor(bal.uiAmount)))}</b> (${esc(fmtUsd(bal.uiAmount * price))})` : '',
+        `💵 Floor: <b>${esc(fmtUsd(listings[0].unit))}</b>/gem  ·  💵 $ZOLANA ${esc(fmtUsd(price))}`,
+        '<i>Tap a listing below to buy it instantly.</i>',
+        '',
+      ];
+      const rows = [];
+      for (const l of listings.slice(0, 6)) {
+        const costZ = price ? l.usd / price : 0;
+        lines.push(`• <b>${esc(l.qty)}</b> gems — <b>${esc(fmtUsd(l.usd))}</b> (${esc(fmtUsd(l.unit))}/gem) ≈ <b>${esc(fmtN(Math.round(costZ)))}</b> $ZOLANA`);
+        rows.push([{ text: `💎 ${l.qty} gems · ${fmtUsd(l.usd)}`, callback_data: `/buygems ${l.id} CONFIRM` }]);
+      }
+      rows.push([{ text: '⬅️ Back', callback_data: '/start' }]);
+      return tg.notify(lines.filter(Boolean).join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
     case '/store': {
       const res = await client.storeState().catch((e) => ({ error: e.message }));
       if (res?.error) return tg.notify(`🛒 Store failed: <code>${res.error}</code>`, menuMarkup);

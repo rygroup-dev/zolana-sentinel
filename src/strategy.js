@@ -1272,6 +1272,7 @@ export class StrategyEngine {
       gems: account.gems,
       shards: account.shards,
       zenko_balance: account.zenko_balance,
+      stamina: account.stamina,
       eggs: activeEggs(player).length,
       hatchedEggs: eggs(player).filter((egg) => egg?.status === 'hatched' || egg?.hatched).length,
       creatures: creatures(player).length,

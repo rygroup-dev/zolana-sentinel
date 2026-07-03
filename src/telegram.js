@@ -108,6 +108,7 @@ export class TelegramBot {
         ],
         [
           { text: '🎁 Claim All', callback_data: '/claim' },
+          { text: '🎁 Daily', callback_data: '/daily' },
           { text: '💤 AFK', callback_data: '/afk' },
           { text: '📜 Quests', callback_data: '/quests' },
         ],
@@ -116,8 +117,8 @@ export class TelegramBot {
         ],
         [
           { text: '🎰 Gacha', callback_data: '/gacha' },
+          { text: '💎 Buy Gems', callback_data: '/buygems' },
           { text: '🛒 Store', callback_data: '/store' },
-          { text: '🎁 Daily', callback_data: '/daily' },
         ],
         [
           { text: '💵 Fund', callback_data: '/fund' },
@@ -222,6 +223,7 @@ export class TelegramBot {
       { command: 'slot', description: '➕ Buy a new plot slot' },
       { command: 'buyegg', description: '🥚 Buy egg (default basic)' },
       { command: 'gacha', description: '🎰 Gacha pull (tier currency)' },
+      { command: 'buygems', description: '💎 Buy gems with $ZOLANA (shows prices)' },
       { command: 'listing', description: '📄 My market listings' },
       { command: 'listings', description: '📄 My market listings' },
       { command: 'cancel', description: '❌ Cancel a listing <id>' },
@@ -321,6 +323,7 @@ export class TelegramBot {
       `🪙 Gold: <b>${num(snapshot.gold)}</b>`,
       `💎 Gems: <b>${num(snapshot.gems)}</b>   🔹 Shards: ${num(snapshot.shards)} <i>(currency, ≠ mana_shard)</i>`,
       `🟣 Zenko: <b>${num(snapshot.zenko_balance)}</b>`,
+      `⚡ Stamina: <b>${num(snapshot.stamina)}</b> <i>(raid/dungeon fuel)</i>`,
       `🥚 Eggs: ${num(snapshot.eggs)}   🐉 Creatures: ${num(snapshot.creatures)}`,
     ];
 
