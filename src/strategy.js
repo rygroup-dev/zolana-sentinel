@@ -821,23 +821,28 @@ export class StrategyEngine {
   // Hard daily cap + reserve guard (inside staminaRestore) so it can never runaway-drain
   // the wallet. Real on-chain transfer — only fires with ZOLANA_REAL_RUN.
   async autoBuyStamina(player, stamina) {
-    if (!this.toggle('autostamina', config.ZOLANA_AUTO_STAMINA)) return;
-    if (!config.ZOLANA_REAL_RUN) return;
-    if (this.actionsThisCycle >= config.ZOLANA_MAX_ACTIONS_PER_CYCLE) return;
-    if (stamina >= Math.min(...REGION_STAMINA)) return; // only when truly drained
+    if (!this.toggle('autostamina', config.ZOLANA_AUTO_STAMINA)) return 0;
+    if (!config.ZOLANA_REAL_RUN) return 0;
+    if (this.actionsThisCycle >= config.ZOLANA_MAX_ACTIONS_PER_CYCLE) return 0;
+    if (stamina >= Math.min(...REGION_STAMINA)) return 0; // only when truly drained
     const day = Math.floor(Date.now() / 86400000);
     const rec = this.state.data.autoStamina?.day === day
       ? this.state.data.autoStamina : { day, count: 0 };
-    if (rec.count >= config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY) { this.state.data.autoStamina = rec; return; }
+    if (rec.count >= config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY) { this.state.data.autoStamina = rec; return 0; }
     this.actionsThisCycle += 1;
     const res = await this.safeAct('autoStamina', () => this.client.staminaRestore('full'));
+    let refilled = 0;
     if (res) {
       rec.count += 1;
-      logger.info({ buysToday: rec.count, cost: config.ZOLANA_STAMINA_ZENKO_COST }, 'auto-bought stamina');
-      this.queueNotify({ text: `⚡ <b>Auto-bought full stamina</b> for ${config.ZOLANA_STAMINA_ZENKO_COST} $ZOLANA — resuming raids. (${rec.count}/${config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY} today)` });
+      // Read the new (full) stamina from the response so the caller can raid THIS cycle
+      // instead of idling until the next one; fall back to the observed max.
+      refilled = staminaNow(res) || Number(this.state.data.raid?.staminaMax) || 180;
+      logger.info({ buysToday: rec.count, stamina: refilled, cost: config.ZOLANA_STAMINA_ZENKO_COST }, 'auto-bought stamina');
+      this.queueNotify({ text: `⚡ <b>Auto-bought full stamina</b> for ${config.ZOLANA_STAMINA_ZENKO_COST} $ZOLANA — raiding now. (${rec.count}/${config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY} today)` });
     }
     this.state.data.autoStamina = rec;
     this.state.save();
+    return refilled;
   }
 
   // Read-only phase for this cycle (does not persist — dungeonRun owns the write). Lets
@@ -870,7 +875,7 @@ export class StrategyEngine {
     if (!config.ZOLANA_RAID_STAMINA_CYCLE) return this.dungeonRunLegacy(player);
 
     // --- Phase machine: RAID (drain stamina with the strongest) ⇄ FARM (regen) ---
-    const stamina = staminaNow(player);
+    let stamina = staminaNow(player);
     const cheapest = Math.min(...REGION_STAMINA);
     const prev = this.state.data.raid;
     const phase = decideRaidPhase(prev, stamina, { cheapest, refillFrac: config.ZOLANA_RAID_REFILL_FRAC });
@@ -888,9 +893,13 @@ export class StrategyEngine {
 
     // FARM phase → no raids; optimizePlacement already farms the strongest for gold.
     // Optionally auto-buy stamina ($ZOLANA) to resume raiding instead of waiting ~22h.
+    // If it refills, DON'T return — raid this same cycle so there's no ~3-min idle gap.
     if (phase.phase === 'farm') {
-      await this.autoBuyStamina(player, stamina);
-      return;
+      const refilled = await this.autoBuyStamina(player, stamina);
+      if (!refilled) return;
+      stamina = refilled;
+      this.state.data.raid = { phase: 'raid', staminaMax: Math.max(Number(phase.staminaMax || 0), refilled) };
+      this.state.save();
     }
 
     // RAID phase → fire the strongest creatures in PARALLEL bursts (server allows many
