@@ -53,6 +53,13 @@ const schema = z.object({
   ZOLANA_AUTO_CLAIMS: z.coerce.boolean().default(true),
   ZOLANA_AUTO_QUESTS: z.coerce.boolean().default(true),
   ZOLANA_AUTO_DUNGEON: z.coerce.boolean().default(true),
+  // Stamina-cycle raiding: when full, RAID with the STRONGEST creatures (unplaced from
+  // farming) in parallel bursts, climbing floors until stamina drains; then FARM (place
+  // the strongest for gold) while stamina regenerates; re-raid once refilled. Kill-switch
+  // — set false to fall back to the legacy "farm the strongest, raid with the rest".
+  ZOLANA_RAID_STAMINA_CYCLE: z.coerce.boolean().default(true),
+  // Re-enter the RAID phase once stamina refills to this fraction of the observed max.
+  ZOLANA_RAID_REFILL_FRAC: z.coerce.number().min(0.1).max(1).default(0.9),
   ZOLANA_AUTO_EVOLVE: z.coerce.boolean().default(true),
   ZOLANA_AUTO_BREED: z.coerce.boolean().default(true),
   ZOLANA_AUTO_GACHA: z.coerce.boolean().default(true),
@@ -82,6 +89,9 @@ const schema = z.object({
   // when unlocked, else gacha. Craft gems free from dungeon gem_catalyst.
   ZOLANA_AUTO_PREMIUM_EGG: z.coerce.boolean().default(true),
   ZOLANA_AUTO_GEMCRAFT: z.coerce.boolean().default(true),
+  // Auto-buy growth eggs with GOLD (bootstrap + reserve). Toggle off (/buyegg) to let
+  // gold accumulate — a forest egg costs 50k, which can keep gold from piling up.
+  ZOLANA_AUTO_BUY_EGG: z.coerce.boolean().default(true),
   // Prefer forest egg (50k gold, up to Rare) over basic when gold is plentiful.
   ZOLANA_EGG_PREFER_FOREST: z.coerce.boolean().default(true),
   ZOLANA_FOREST_EGG_GOLD_FLOOR: z.coerce.number().int().min(0).default(90000),

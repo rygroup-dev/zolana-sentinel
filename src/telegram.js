@@ -175,6 +175,9 @@ export class TelegramBot {
           row('GemCraft', 'gemcraft', config.ZOLANA_AUTO_GEMCRAFT),
         ],
         [
+          row('BuyEgg💰', 'buyegg', config.ZOLANA_AUTO_BUY_EGG),
+        ],
+        [
           row('Relic', 'relic', config.ZOLANA_AUTO_RELIC),
           row('RelicEnh', 'relicEnhance', config.ZOLANA_AUTO_RELIC_ENHANCE),
           row('Compan', 'companion', config.ZOLANA_AUTO_COMPANION),

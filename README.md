@@ -24,7 +24,7 @@ Zolana Sentinel plays the game for you — around the clock. It reverse-engineer
 | | |
 | --- | --- |
 | 🌾 **Smart farming** | Always places the highest gold-per-hour creatures; auto-swaps weak ones out. |
-| 🏰 **Dungeon / raid climbing** | Auto-calibrates party power and climbs the 25 floors as far as it can clear. |
+| 🏰 **Stamina-cycle raiding** | When stamina is full it raids with the **strongest** creatures in parallel bursts, detecting each party's power and climbing the 25 floors as far as it can clear; when stamina drains it farms for gold while it regenerates, then raids again. |
 | 🧬 **Growth engine** | Budget-aware evolve, breeding for rarity upgrades, gacha, and gem crafting. |
 | 📜 **Full reward collection** | Quests, dex milestones, daily, idle, epoch, hold-claims — nothing left on the table. |
 | 💠 **Material economy** | Keeps craft/build reserves, sells only the surplus at market floor. |
@@ -118,6 +118,20 @@ sudo systemctl enable --now zolana-sentinel
 journalctl -u zolana-sentinel -f
 ```
 </details>
+
+## 🔄 Update
+
+Pull the latest version and restart:
+
+```bash
+cd zolana-sentinel   # or your install dir (e.g. /root/zolana)
+git pull
+npm install          # in case dependencies changed
+# then restart: either re-run `node src/index.js`, or if using systemd:
+sudo systemctl restart zolana-sentinel
+```
+
+New config keys land in [`.env.example`](.env.example) — copy any you want into your own `.env` (existing keys keep working; all new features have safe defaults).
 
 ## 📲 Telegram Control
 

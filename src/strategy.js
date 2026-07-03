@@ -88,6 +88,33 @@ const DUNGEONS = Array.from({ length: 25 }, (_, i) => {
 const dungeonReqPower = (floor) =>
   Math.round(120 * (floor ** 1.85) * (1 + Math.min(0.7, 0.03 * floor)));
 
+// --- Stamina-cycle raiding (pure, unit-tested) ---------------------------------
+// The game has no `stamina_max`/regen field — stamina is a lazily-computed value on
+// the account. We infer the cap from the highest value ever observed (it fully
+// regenerates during idle, e.g. maintenance). Phase machine with hysteresis:
+//   RAID  → keep raiding until stamina can't afford the cheapest floor → FARM
+//   FARM  → place the strongest for gold until stamina refills past refillFrac → RAID
+export function decideRaidPhase(prev, stamina, opts = {}) {
+  const cheapest = opts.cheapest ?? 6;
+  const refillFrac = opts.refillFrac ?? 0.9;
+  const staminaMax = Math.max(Number(prev?.staminaMax || 0), Number(stamina || 0));
+  let phase = prev?.phase || 'raid';
+  if (phase === 'raid' && stamina < cheapest) phase = 'farm';
+  else if (phase === 'farm' && stamina >= staminaMax * refillFrac) phase = 'raid';
+  return { phase, staminaMax };
+}
+
+// Pick the highest floor a party of the detected `power` can clear, bounded by the
+// stamina left this burst. `power == null` → highest affordable floor, so the very
+// first (strongest) party reveals its real power from the server on start.
+// `floors` must be pre-sorted highest-id-first; `reqPower(id)` = required power.
+export function pickFloor(floors, power, remStamina, reqPower = dungeonReqPower) {
+  const affordable = floors.filter((d) => d.staminaCost <= remStamina);
+  if (!affordable.length) return null;
+  if (power == null) return affordable[0];
+  return affordable.find((d) => reqPower(d.id) <= power) || affordable[affordable.length - 1];
+}
+
 // Client-computed quest catalog. There is NO quest-list endpoint — the client
 // evaluates completion from player metrics and POSTs /api/quests/claim {questId}.
 // Each claim grants +150 account XP (the main lever for account level).
@@ -390,14 +417,20 @@ export class StrategyEngine {
     }
 
     // --- Fill empty slots, then make sure the BEST gold-producers are the placed ones ---
+    // In the RAID phase the strongest are drafted OUT of the farm into dungeons, so don't
+    // re-place them here; farming/placement runs in the FARM phase (and when the
+    // stamina-cycle is disabled, always — legacy behavior).
     const account = actor(player);
-    const slots = Number(account.place_slots || this.targetPlaced());
-    const placedCount = creatures(player).filter(isPlaced).length;
-    const unplaced = creatures(player).filter((c) => !isPlaced(c)).length;
-    if (unplaced > 0 && placedCount < slots) {
-      await this.safeAct('placeAuto', () => this.client.placeAuto(slots - placedCount));
+    const farming = !config.ZOLANA_RAID_STAMINA_CYCLE || this.raidPhaseNow(player) === 'farm';
+    if (farming) {
+      const slots = Number(account.place_slots || this.targetPlaced());
+      const placedCount = creatures(player).filter(isPlaced).length;
+      const unplaced = creatures(player).filter((c) => !isPlaced(c)).length;
+      if (unplaced > 0 && placedCount < slots) {
+        await this.safeAct('placeAuto', () => this.client.placeAuto(slots - placedCount));
+      }
+      await this.optimizePlacement();
     }
-    await this.optimizePlacement();
 
     // --- Claim every completed quest (client-computed; +150 acct XP each) ---
     await this.claimQuests(player);
@@ -555,7 +588,7 @@ export class StrategyEngine {
     if (!this.state.ready('breed')) return;
 
     const adults = creatures(player)
-      .filter((c) => ['Adult', 'Elder'].includes(creatureStage(c)) && !c.listed && !c.stored)
+      .filter((c) => ['Adult', 'Elder'].includes(creatureStage(c)) && !c.listed && !c.stored && !c.run_id)
       .filter((c) => {
         const last = Date.parse(c.last_breed_time || '');
         return !Number.isFinite(last) || Date.now() - last >= BREED_COOLDOWN_MS;
@@ -783,6 +816,15 @@ export class StrategyEngine {
     }
   }
 
+  // Read-only phase for this cycle (does not persist — dungeonRun owns the write). Lets
+  // placement know whether the strongest are farming (FARM) or being drafted to raid.
+  raidPhaseNow(player) {
+    return decideRaidPhase(this.state.data.raid, staminaNow(player), {
+      cheapest: Math.min(...REGION_STAMINA),
+      refillFrac: config.ZOLANA_RAID_REFILL_FRAC,
+    }).phase;
+  }
+
   async dungeonRun(player) {
     if (!this.toggle('dungeon', config.ZOLANA_AUTO_DUNGEON)) return;
 
@@ -800,18 +842,111 @@ export class StrategyEngine {
       if (done) await this.safeAct(`dungeonClaim:${runId}`, () => this.client.dungeonClaim(runId));
     }
 
+    // Stamina-cycle disabled → legacy "farm the strongest, raid with the rest".
+    if (!config.ZOLANA_RAID_STAMINA_CYCLE) return this.dungeonRunLegacy(player);
+
+    // --- Phase machine: RAID (drain stamina with the strongest) ⇄ FARM (regen) ---
+    const stamina = staminaNow(player);
+    const cheapest = Math.min(...REGION_STAMINA);
+    const prev = this.state.data.raid;
+    const phase = decideRaidPhase(prev, stamina, { cheapest, refillFrac: config.ZOLANA_RAID_REFILL_FRAC });
+    if (!prev || prev.phase !== phase.phase) {
+      logger.info({ from: prev?.phase || 'init', to: phase.phase, stamina, staminaMax: phase.staminaMax }, 'raid phase switch');
+      // Notify on the TRANSITION only (never every cycle) so the activity feed isn't spammed.
+      const pct = phase.staminaMax ? Math.round((stamina / phase.staminaMax) * 100) : 0;
+      const msg = phase.phase === 'raid'
+        ? `⚔️ <b>RAIDING</b> — stamina full (${stamina}/${phase.staminaMax}), storming dungeons with the strongest creatures.`
+        : `🌾 <b>FARMING (AFK)</b> — stamina drained (${stamina}/${phase.staminaMax}, ${pct}%), farming gold while it regenerates.`;
+      this.queueNotify({ text: msg });
+    }
+    this.state.data.raid = phase;
+    this.state.save();
+
+    // FARM phase → no raids; optimizePlacement already farms the strongest for gold.
+    if (phase.phase === 'farm') return;
+
+    // RAID phase → fire the strongest creatures in PARALLEL bursts (server allows many
+    // concurrent runs), each party climbing to the highest floor its DETECTED power can
+    // clear, spending stamina until the account drains and flips to FARM. Power isn't on
+    // the creature payload, so we learn it per party from dungeonStart's `party_power`
+    // (success) or the "have N" reject (ceiling) and match the floor to it via pickFloor.
+    const affordable = DUNGEONS.filter((d) => stamina >= d.staminaCost).sort((a, b) => b.id - a.id);
+    if (!affordable.length) return;
+
+    let pool = creatures(player)
+      .filter((c) => c.id && !c.run_id && !c.listed && !c.stored && !c.bound)
+      .sort((a, b) => byWeakestCreature(b, a)); // strongest first
+
+    const startParty = async (target, trio) => {
+      // A creature is placed XOR raiding — unplace any farmers we're drafting into a raid.
+      for (const c of trio) {
+        if (isPlaced(c)) await this.safeAct(`unplace:${c.id}`, () => this.client.unplace(c.id));
+      }
+      this.actionsThisCycle += 1;
+      const ids = trio.map((c) => c.id);
+      try {
+        const result = await this.client.dungeonStart(target.id, ids);
+        this.state.count(`dungeonStart:f${target.id}`);
+        const run = dungeonRuns(result).find((r) => Array.isArray(r.party) && r.party.includes(ids[0]));
+        const pw = Number(run?.party_power);
+        if (Number.isFinite(pw) && pw > 0) {
+          this.state.data.partyPower = pw;
+          // Remember the strongest party ever fielded so next cycle's FIRST (strongest)
+          // party is targeted at the high floors it can actually clear — not bonsai'd to
+          // floor 1 by the previous cycle's weakest party.
+          this.state.data.maxPartyPower = Math.max(Number(this.state.data.maxPartyPower || 0), pw);
+          this.state.save();
+        }
+        logger.info({ floor: target.id, region: target.name, gold: target.goldMin, power: pw }, 'raid started');
+        return { ok: true, power: pw };
+      } catch (error) {
+        const have = /have (\d+)/i.exec(error.message || '')?.[1];
+        if (have) { this.state.data.partyPower = Number(have); this.state.save(); }
+        logger.warn({ floor: target.id, message: error.message }, 'raid start skipped');
+        return { ok: false, power: have ? Number(have) : null };
+      }
+    };
+
+    let remStamina = stamina;
+    // Parties are strongest-first, so each party's power ≤ the previous one's. Seed the
+    // FIRST party at the highest power ever detected (climbs the deep floors), then step
+    // the estimate DOWN to each party's real power as we go — never bonsai'd to floor 1.
+    let est = this.state.data.maxPartyPower ?? this.state.data.partyPower ?? null;
+    while (pool.length >= 3
+      && this.actionsThisCycle < config.ZOLANA_MAX_ACTIONS_PER_CYCLE
+      && config.ZOLANA_REAL_RUN) {
+      const target = pickFloor(affordable, est, remStamina);
+      if (!target) break; // can't afford even the cheapest floor → stamina is drained
+      const trio = pool.slice(0, 3);
+      pool = pool.slice(3);
+      const res = await startParty(target, trio);
+      if (res.ok) {
+        remStamina -= target.staminaCost;
+        if (res.power) est = res.power; // next (weaker) party is capped by this one
+        continue;
+      }
+      // Rejected → we just learned this trio's real ceiling; retry IT at the right floor.
+      if (res.power) est = res.power;
+      const retry = pickFloor(affordable, est, remStamina);
+      if (retry && retry.id !== target.id && this.actionsThisCycle < config.ZOLANA_MAX_ACTIONS_PER_CYCLE) {
+        const r2 = await startParty(retry, trio);
+        if (r2.ok) { remStamina -= retry.staminaCost; if (r2.power) est = r2.power; }
+      }
+    }
+    // Keep the burst going next cycle while stamina remains (no long cooldown in RAID).
+  }
+
+  // Legacy dungeon strategy (pre stamina-cycle): reserve the top gold-producers as
+  // farmers and raid with the strongest of the rest, one run per cooldown window.
+  async dungeonRunLegacy(player) {
     if (!this.state.ready('dungeon')) return;
 
     const stamina = staminaNow(player);
     const affordable = DUNGEONS
       .filter((d) => stamina >= d.staminaCost)
-      .sort((a, b) => b.id - a.id); // highest floor first
+      .sort((a, b) => b.id - a.id);
     if (!affordable.length) { this.state.cooldown('dungeon', DUNGEON_COOLDOWN_MS); return; }
 
-    // Reserve the top gold-producers for continuous FARMING (a placed Legendary earns
-    // far more than any single raid). Raid with the strongest of the REST — they climb
-    // as high (of the 25 floors) as their power allows. As the account collects more
-    // strong creatures than farm slots, the surplus naturally raids the high floors.
     const slots = Number(actor(player).place_slots || this.targetPlaced());
     const farmers = new Set(
       creatures(player).filter((c) => c.id && !c.stored && !c.listed)
@@ -819,13 +954,11 @@ export class StrategyEngine {
     );
     const party = creatures(player)
       .filter((c) => c.id && !c.run_id && !c.listed && !c.stored && !farmers.has(c.id))
-      .sort((a, b) => byWeakestCreature(b, a)) // strongest of the rest first
+      .sort((a, b) => byWeakestCreature(b, a))
       .slice(0, 3)
       .map((c) => c.id);
     if (party.length < 3) { this.state.cooldown('dungeon', DUNGEON_COOLDOWN_MS); return; }
 
-    // Highest floor the (server-calibrated) party power can clear. Unknown → try the
-    // highest affordable to learn actual power from the reject, then retry same cycle.
     const floorFor = (p) => (p == null
       ? affordable[0]
       : (affordable.find((d) => dungeonReqPower(d.id) <= p) || affordable[affordable.length - 1]));
@@ -836,8 +969,6 @@ export class StrategyEngine {
       try {
         const result = await this.client.dungeonStart(target.id, party);
         this.state.count(`dungeonStart:f${target.id}`);
-        // Learn the real party power from the started run so we can CLIMB higher next
-        // cycle (rejects only teach us the ceiling; success reveals the actual power).
         const run = dungeonRuns(result).find((r) => Array.isArray(r.party) && r.party.includes(party[0]));
         const pw = Number(run?.party_power);
         if (Number.isFinite(pw) && pw > 0) { this.state.data.partyPower = pw; this.state.save(); }
@@ -936,11 +1067,16 @@ export class StrategyEngine {
     const eggCount = activeEggs(player).length;
     const gold = Number(account.gold || 0);
     const growthStock = creatureCount + eggCount;
+    // Don't re-place creatures while the RAID phase is drafting them into dungeons
+    // (otherwise we'd fight dungeonRun's unplace and churn the action budget).
+    const farming = !config.ZOLANA_RAID_STAMINA_CYCLE || this.raidPhaseNow(player) === 'farm';
 
     // Bootstrap growth: hatched eggs stay in the API response as history, so only
     // active eggs count toward filling farm slots.
+    const buyEggOn = this.toggle('buyegg', config.ZOLANA_AUTO_BUY_EGG);
     if (
-      growthStock < target
+      buyEggOn
+      && growthStock < target
       && gold >= BASIC_EGG_COST
       && this.state.ready('buyEgg:basic')
     ) {
@@ -950,14 +1086,15 @@ export class StrategyEngine {
       return;
     }
 
-    if (creatureCount > placedCount && placedCount < target) {
+    if (farming && creatureCount > placedCount && placedCount < target) {
       await this.safeAct('placeAuto', () => this.client.placeAuto(target - placedCount));
     }
 
     // Farm expansion pipeline: once the current plots are full, keep a tiny
     // reserve of active eggs so the account grows into new creatures over time.
     if (
-      placedCount >= target
+      buyEggOn
+      && placedCount >= target
       && eggCount < config.ZOLANA_EGG_RESERVE_TARGET
       && gold >= config.ZOLANA_EGG_BUY_GOLD_FLOOR
       && gold - BASIC_EGG_COST >= config.ZOLANA_EGG_BUY_GOLD_RESERVE
@@ -978,7 +1115,7 @@ export class StrategyEngine {
     ) {
       const bought = await this.safeAct('buySlot', () => this.client.buyPlaceSlot());
       this.state.cooldown('buySlot', SLOT_COOLDOWN_MS);
-      if (bought) await this.safeAct('placeAuto', () => this.client.placeAuto(1));
+      if (bought && farming) await this.safeAct('placeAuto', () => this.client.placeAuto(1));
     }
   }
 
