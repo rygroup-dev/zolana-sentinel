@@ -224,7 +224,7 @@ export class TelegramBot {
       { command: 'claim', description: '🎁 Claim all free rewards' },
       { command: 'afk', description: '💤 Enter AFK zone before going offline' },
       { command: 'slot', description: '➕ Buy a new plot slot' },
-      { command: 'buyegg', description: '🥚 Buy egg (default basic)' },
+      { command: 'buyegg', description: '🥚 Egg menu + auto-buy ON/OFF' },
       { command: 'gacha', description: '🎰 Gacha pull (tier currency)' },
       { command: 'buygems', description: '💎 Buy gems with $ZOLANA (shows prices)' },
       { command: 'listing', description: '📄 My market listings' },

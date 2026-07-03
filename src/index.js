@@ -335,7 +335,31 @@ async function handleCommand(command, tg, engine, state) {
     }
 
     case '/buyegg': {
-      const type = args[0] || 'basic';
+      const type = args[0];
+      // No arg → show the AUTO-buy toggle (what the user reaches for) + manual buy menu.
+      // Requiring an explicit type also prevents an accidental gold purchase.
+      if (!type) {
+        const on = engine.toggle('buyegg', AUTO_DEFAULTS.buyegg);
+        return tg.notify([
+          '🥚 <b>Buy Egg</b>',
+          '━━━━━━━━━━━━━━━━━━━━',
+          `🤖 Auto-buy (gold eggs): <b>${on ? '🟢 ON' : '🔴 OFF'}</b>`,
+          on
+            ? 'Autopilot buys growth eggs with gold (basic/forest). Turn OFF to let gold pile up.'
+            : 'Autopilot will NOT spend gold on eggs. Turn ON to auto-grow the roster.',
+          '',
+          'Or buy one manually below:',
+        ].join('\n'), {
+          reply_markup: {
+            inline_keyboard: [
+              [{ text: on ? '🔴 Turn Auto-buy OFF' : '🟢 Turn Auto-buy ON', callback_data: '/toggle buyegg' }],
+              [{ text: '🥚 Basic · 2.5k gold', callback_data: '/buyegg basic' }, { text: '🌲 Forest · 50k gold', callback_data: '/buyegg forest' }],
+              [{ text: '💎 Premium · 50 gems', callback_data: '/buyegg premium' }, { text: '🥇 Golden · 90 gems', callback_data: '/buyegg golden' }],
+              [{ text: '⬅️ Back', callback_data: '/start' }],
+            ],
+          },
+        });
+      }
       const res = await client.buyEgg(type).catch((e) => ({ error: e.message }));
       return tg.notify(res?.error ? `🥚 Failed: <code>${res.error}</code>` : `🥚 Egg <b>${esc(type)}</b> bought.`, menuMarkup);
     }
