@@ -117,8 +117,17 @@ async function handleCommand(command, tg, engine, state) {
     case '/help':
       return tg.notify(tg.menuText(), menuMarkup);
 
-    case '/status':
-      return tg.notify(tg.formatStatus(state.data.lastPlayer, state.data.market), menuMarkup);
+    case '/status': {
+      // Fetch LIVE (not the ~3-min-old cycle snapshot) so stamina/gold/xp are real-time.
+      // Refresh the cache too, and fall back to the snapshot if the live fetch fails.
+      let snap = state.data.lastPlayer;
+      try {
+        const live = await client.loadPlayer();
+        snap = engine.snapshotPlayer(live);
+        state.data.lastPlayer = snap; state.save();
+      } catch { /* offline/maintenance → show last snapshot */ }
+      return tg.notify(tg.formatStatus(snap, state.data.market), menuMarkup);
+    }
 
     case '/market':
       return tg.notify(tg.formatStatus(state.data.lastPlayer, state.data.market), menuMarkup);
