@@ -17,6 +17,12 @@ const BREED_COOLDOWN_MS = 60 * 60 * 1000;
 const GACHA_COOLDOWN_MS = 30 * 60 * 1000;
 const BASIC_EGG_COST = 2500;
 const MARKET_KINDS = ['creature', 'egg', 'relic', 'material', 'gem', 'gold', 'cosmetic'];
+// Creatures the autopilot may auto-sell (below Rare). Rare+ are kept for manual /sell.
+const AUTO_SELL_RARITIES = new Set(['Common', 'Uncommon']);
+// Pacing between the ~8 marketIntel browse calls — firing them back-to-back gets
+// rate-limited by Cloudflare and returns empty ("count:0") for the whole batch.
+const MARKET_INTEL_DELAY_MS = 700;
+const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
 
 // --- Reverse-engineered game mechanics (see reference_zolana_mechanics memory) ---
 // Stage ladder; only Elder can battle. Evolve ALWAYS costs evolveCost gold; useXp
@@ -1188,12 +1194,19 @@ export class StrategyEngine {
     return notes;
   }
 
+  // Human name for a market row, per kind (creature_id/egg_type/base_id/cosmetic_id/resource).
+  marketItemName(x) {
+    const it = x.item || {};
+    return it.creature_id || (it.egg_type ? `${it.egg_type} egg` : null)
+      || it.base_id || it.cosmetic_id || x.resource || x.item_kind || 'item';
+  }
+
   saleNote(x) {
-    const name = x.resource || x.item?.creature_id || x.item_kind || 'item';
+    const name = this.marketItemName(x);
     const qty = x.quantity ? `×${Math.round(Number(x.quantity)).toLocaleString('en-US')} ` : '';
     const price = x.price_usd != null ? `$${x.price_usd}` : (x.price_gems != null ? `${x.price_gems}💎` : '?');
     const buyer = x.buyer ? `\n👤 buyer <code>${String(x.buyer).slice(0, 6)}…</code>` : '';
-    return `💰 <b>TERJUAL!</b> ${qty}${name} — <b>${price}</b>${buyer}`;
+    return `💰 <b>SOLD!</b> ${qty}${name} — <b>${price}</b>${buyer}`;
   }
 
   // List an item AND fire a Telegram notification on success. Tracking of the new
@@ -1203,9 +1216,19 @@ export class StrategyEngine {
     if (res) {
       const name = payload.resource || payload.itemKind || 'item';
       const qty = payload.quantity ? `×${Math.round(Number(payload.quantity)).toLocaleString('en-US')} ` : '';
-      this.queueNotify({ text: `🏷️ <b>Dijual di market</b>\n${qty}${name} — <b>$${payload.priceUsd}</b>` });
+      this.queueNotify({ text: `🏷️ <b>Listed on market</b>\n${qty}${name} — <b>$${payload.priceUsd}</b>` });
     }
     return res;
+  }
+
+  // Idempotent market browse that never throws and never touches the action budget.
+  async browseMarket(kind) {
+    try {
+      return await this.client.market(kind, { sort: 'cheap', limit: 50 });
+    } catch (error) {
+      logger.warn({ kind, message: error.message }, 'market browse failed');
+      return null;
+    }
   }
 
   async marketIntel() {
@@ -1222,7 +1245,15 @@ export class StrategyEngine {
     }
 
     for (const kind of MARKET_KINDS) {
-      const data = await this.safeAct(`market:${kind}`, () => this.client.market(kind, { sort: 'cheap', limit: 50 }));
+      await sleep(MARKET_INTEL_DELAY_MS); // pace calls so Cloudflare doesn't rate-limit the batch → empty
+      // Browse is an idempotent GET — call directly (NOT via safeAct) so these ~8 reads
+      // don't burn the per-cycle write-action budget and starve raids/sells.
+      let data = await this.browseMarket(kind);
+      // Empty almost always means rate-limited (not truly 0 listings) — retry once after a pause.
+      if (!list(data?.listings).length) {
+        await sleep(MARKET_INTEL_DELAY_MS * 2);
+        data = (await this.browseMarket(kind)) || data;
+      }
       const listings = list(data?.listings);
       books[kind] = listings;
       const priced = listings
@@ -1351,12 +1382,13 @@ export class StrategyEngine {
     const mine = await this.safeAct('market:mine', () => this.client.marketMine()) || {};
     const listedIds = new Set(list(mine.listings).map((item) => item.item_id).filter(Boolean));
 
-    // --- Sell surplus creatures at a market-driven price (undercut floor, never dump) ---
-    // ONLY sell surplus COMMON creatures — never the Uncommon+ producers/breeders
-    // (they're worth far more farming/breeding than the tiny market price). Sell the
-    // weakest first, keep a buffer, and never touch placed/bound/listed ones.
+    // --- Sell surplus LOW-rarity creatures at a market-driven price (undercut floor) ---
+    // Auto-sell only Common + Uncommon (below Rare). Rare/Epic/Legendary/Mythical are
+    // KEPT for the user to sell manually via /sell — they're worth far more as
+    // producers/breeders than the tiny auto-price. Sell the weakest first, keep a
+    // buffer, and never touch placed/bound/listed/on-run ones.
     const spareCreatures = creatures(player)
-      .filter((item) => item.rarity === 'Common'
+      .filter((item) => AUTO_SELL_RARITIES.has(item.rarity)
         && !item.bound && !item.stored && !item.listed
         && !isPlaced(item) && !item.run_id && !listedIds.has(item.id))
       .sort((a, b) => coinsPerHour(a) - coinsPerHour(b));

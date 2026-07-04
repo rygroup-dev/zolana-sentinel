@@ -94,7 +94,7 @@ export class TelegramBot {
         [
           { text: '📊 Status', callback_data: '/status' },
           { text: '🏪 Market', callback_data: '/market' },
-          { text: '🏷️ Jual', callback_data: '/sell' },
+          { text: '🏷️ Sell', callback_data: '/sell' },
           { text: '💰 Wallet', callback_data: '/wallet' },
         ],
         [
@@ -208,7 +208,7 @@ export class TelegramBot {
       { command: 'wallet', description: '💰 SOL + $ZOLANA balance' },
       { command: 'profit', description: '📈 Net worth & profit tracker' },
       { command: 'market', description: '🏪 Marketplace analysis' },
-      { command: 'sell', description: '🏷️ Jual item manual (set harga & qty)' },
+      { command: 'sell', description: '🏷️ Sell items manually (set price & qty)' },
       { command: 'store', description: '🛒 Gem store offers' },
       { command: 'pvp', description: '⚔️ Run a PvP match' },
       { command: 'dungeon', description: '🏰 Start/claim dungeon (raid)' },
@@ -374,7 +374,7 @@ export class TelegramBot {
     const lines = [
       '<b>📈 PROFIT TRACKER</b>',
       HR,
-      `💵 Harga $ZOLANA: <b>${usd(p.zolanaPriceUsd)}</b>`,
+      `💵 $ZOLANA price: <b>${usd(p.zolanaPriceUsd)}</b>`,
       `🪙 Hold token: <b>${num(p.tokenBalance)}</b>` + (p.tokenUsd != null ? `  ≈ <b>${usd(p.tokenUsd)}</b>` : ''),
       HR,
       `🪙 Gold: ${num(p.gold)}   💎 Gems: ${num(p.gems)}`,

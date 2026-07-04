@@ -111,6 +111,18 @@ async function handleCommand(command, tg, engine, state) {
   // Ensure we have a valid session before hitting any game endpoint on demand.
   await client.ensureLogin().catch(() => {});
 
+  // Pending manual-sale price entry: a plain (non-command) message while a /sell pick
+  // is waiting → parse "<price> [qty]" and list it. Expires after 5 min.
+  const ps = state.data.pendingSale;
+  if (ps && !name.startsWith('/')) {
+    const nums = command.split(/\s+/).map(Number).filter(Number.isFinite);
+    if (nums.length && nums[0] > 0 && (Date.now() - ps.ts) < 5 * 60 * 1000) {
+      state.data.pendingSale = null; state.save();
+      const qty = ps.needsQty ? Math.min(Math.floor(nums[1] || ps.qtyDefault), ps.maxQty) : ps.qtyDefault;
+      return performList(client, tg, sellPayload(ps, nums[0], qty));
+    }
+  }
+
   switch (name) {
     case '/start':
     case '/commands':
@@ -129,8 +141,29 @@ async function handleCommand(command, tg, engine, state) {
       return tg.notify(tg.formatStatus(snap, state.data.market), menuMarkup);
     }
 
-    case '/market':
-      return tg.notify(tg.formatStatus(state.data.lastPlayer, state.data.market), menuMarkup);
+    case '/market': {
+      const s = state.data.market?.summary || {};
+      const checked = state.data.market?.checkedAt ? new Date(state.data.market.checkedAt) : null;
+      const order = ['creature', 'egg', 'relic', 'cosmetic', 'material', 'gem', 'gold'];
+      const emoji = { creature: '🐾', egg: '🥚', relic: '💍', cosmetic: '🎀', material: '⛏️', gem: '💎', gold: '💰' };
+      const lines = ['<b>🏪 MARKETPLACE</b>', '━━━━━━━━━━━━━━━━━━━━', '<i>Floor price per unit ($):</i>', ''];
+      let any = false;
+      for (const k of order) {
+        const f = s[k];
+        if (!f || !f.count) continue;
+        any = true;
+        const floor = f.floorUnitUsd != null ? `$${f.floorUnitUsd}` : '—';
+        lines.push(`${emoji[k]} <b>${k}</b> — floor ${floor} · ${f.count} listed`);
+      }
+      if (!any) lines.push('<i>No market data cached yet (updates every ~20 min).</i>');
+      if (checked) lines.push('', `<i>Updated ${checked.toISOString().slice(11, 16)} UTC</i>`);
+      const rows = [
+        [{ text: '🏷️ Sell My Items', callback_data: '/sell' }],
+        [{ text: '📄 My Listings', callback_data: '/listings' }, { text: '💎 Buy Gems', callback_data: '/buygems' }],
+        [{ text: '⬅️ Back', callback_data: '/start' }],
+      ];
+      return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
 
     case '/wallet': {
       const sol = await client.wallet.solBalance().catch(() => 0);
@@ -587,100 +620,125 @@ async function handleCommand(command, tg, engine, state) {
     }
 
     case '/sell': {
-      const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
-      const fmtUsd = (n) => `$${Number(n || 0).toFixed(Number(n) < 0.01 ? 4 : 2)}`;
+      state.data.pendingSale = null; state.save();
       const summary = state.data.market?.summary || {};
       let player;
       try { player = await client.loadPlayer(); }
-      catch { return tg.notify('❌ Gagal ambil inventory (game offline/maintenance?). Coba lagi.', menuMarkup); }
+      catch { return tg.notify('❌ Could not load inventory (game offline/maintenance?). Try again.', menuMarkup); }
       const acct = player.player || player;
 
-      // ---- MANUAL LIST PATH: /sell <kind> ... <priceUsd> [qty] ----
-      if (args.length) {
-        const kind = String(args[0]).toLowerCase();
-        const payload = { itemKind: kind, currency: 'zenko' };
-        if (kind === 'gold') {
-          const priceUsd = Number(args[1]); const qty = Math.floor(Number(args[2]));
-          if (!(priceUsd > 0) || !(qty > 0)) return tg.notify('Format:\n<code>/sell gold &lt;hargaUSD&gt; &lt;qty&gt;</code>', menuMarkup);
-          if (qty > Number(acct.gold || 0)) return tg.notify(`❌ Gold kurang (punya ${fmtN(acct.gold)}).`, menuMarkup);
-          payload.quantity = qty; payload.priceUsd = priceUsd;
-        } else if (kind === 'material') {
-          const ref = args[1]; const priceUsd = Number(args[2]); const qty = Math.floor(Number(args[3]));
-          if (!ref || !(priceUsd > 0) || !(qty > 0)) return tg.notify('Format:\n<code>/sell material &lt;resource&gt; &lt;hargaUSD&gt; &lt;qty&gt;</code>', menuMarkup);
-          const held = (player.materials || []).find((m) => m.material_id === ref);
-          if (!held) return tg.notify(`❌ Material <code>${esc(ref)}</code> tidak ada.`, menuMarkup);
-          if (qty > Number(held.quantity || 0)) return tg.notify(`❌ ${esc(ref)} kurang (punya ${fmtN(held.quantity)}).`, menuMarkup);
-          payload.resource = ref; payload.quantity = qty; payload.priceUsd = priceUsd;
-        } else if (kind === 'creature' || kind === 'egg') {
-          const ref = args[1]; const priceUsd = Number(args[2]);
-          if (!ref || !(priceUsd > 0)) return tg.notify(`Format:\n<code>/sell ${kind} &lt;id&gt; &lt;hargaUSD&gt;</code>`, menuMarkup);
-          const pool = kind === 'creature' ? (player.creatures || []) : (player.eggs || []);
-          const it = pool.find((x) => x.id === ref) || pool.find((x) => String(x.id).startsWith(ref));
-          if (!it) return tg.notify(`❌ ${esc(kind)} id <code>${esc(ref)}</code> tidak ketemu.`, menuMarkup);
-          payload.itemId = it.id; payload.priceUsd = priceUsd;
-        } else {
-          return tg.notify('❌ Jenis tidak dikenal. Pakai: <code>gold</code> / <code>material</code> / <code>creature</code> / <code>egg</code>.', menuMarkup);
-        }
-        const res = await client.marketList(payload).catch((e) => ({ error: e.message }));
-        if (res?.error) return tg.notify(`❌ Gagal jual: <code>${esc(res.error)}</code>`, menuMarkup);
-        return tg.notify([
-          '🏷️ <b>TERPASANG DI MARKET!</b>',
-          `${esc(kind)}${payload.quantity ? ` ×${fmtN(payload.quantity)}` : ''} — <b>${fmtUsd(payload.priceUsd)}</b>`,
-          'Notif otomatis masuk saat terjual. Batal: /listings → /cancel &lt;id&gt;',
-        ].join('\n'), menuMarkup);
-      }
-
-      // ---- INVENTORY VIEW: tap a command, edit harga/qty, kirim ----
-      let matFloor = {};
+      // Per-material floor (only market source that carries per-resource unit price).
+      const matFloor = {};
       try {
         const mb = await client.market('material', { sort: 'cheap', limit: 50 });
         for (const l of (mb?.listings || [])) {
           const r = l.resource; const u = Number(l.price_usd) / Math.max(1, Number(l.quantity || 1));
           if (r && Number.isFinite(u) && u > 0) matFloor[r] = Math.min(matFloor[r] ?? Infinity, u);
         }
-      } catch { /* no market data → placeholder prices */ }
-      const uCre = Number(summary.creature?.floorUnitUsd) || null;
-      const uEgg = Number(summary.egg?.floorUnitUsd) || null;
-      const uGold = Number(summary.gold?.floorUnitUsd) || null;
-      const cPrice = uCre ? (uCre * 0.97).toFixed(2) : '0.03';
-      const eP = uEgg ? (uEgg * 0.97).toFixed(2) : '0.05';
+      } catch { /* fall back to placeholder prices */ }
 
-      const lines = ['<b>🏷️ JUAL MANUAL</b>', '━━━━━━━━━━━━━━━━━━━━', '<i>Tap command → edit harga/qty → kirim.</i>', ''];
+      const rows = [];
+      const price = (kind, resource) => sellUnitFloor(summary, kind, matFloor, resource) * 0.97;
 
+      // 💰 Gold
       const gold = Number(acct.gold || 0);
-      lines.push(`💰 <b>Gold:</b> ${fmtN(gold)}`);
       if (gold > 1000) {
         const q = Math.min(gold - 1000, 300000);
-        const unit = uGold ? uGold * 0.97 : 1 / 320000;
-        lines.push(`  <code>/sell gold ${(unit * q).toFixed(2)} ${q}</code>`);
+        rows.push([{ text: `💰 Gold ×${short(q)} · ~$${(price('gold') * q).toFixed(2)}`, callback_data: `/sp g all` }]);
+      }
+      // ⛏️ Materials (any stack ≥ 50)
+      for (const m of (player.materials || []).filter((x) => Number(x.quantity) >= 50).slice(0, 6)) {
+        const q = Math.min(Number(m.quantity), 2000);
+        rows.push([{ text: `⛏️ ${m.material_id} ×${short(m.quantity)} · ~$${(price('material', m.material_id) * q).toFixed(3)}`, callback_data: `/sp m ${m.material_id}` }]);
+      }
+      // 🎀 Cosmetics (tradeable, not equipped/listed/stored) — pure vanity = free profit
+      for (const c of (player.cosmetics || []).filter((x) => x.tradeable && !x.equipped && !x.listed && !x.stored).slice(0, 6)) {
+        rows.push([{ text: `🎀 ${c.cosmetic_id} ${c.rarity} · ~$${price('cosmetic').toFixed(2)}`, callback_data: `/sp k ${c.id}` }]);
+      }
+      // 💍 Relics (not equipped/bound/soulbound/listed/stored)
+      for (const r of (player.relics || []).filter((x) => !x.equipped_on && !x.bound && !x.soulbound && !x.listed && !x.stored).slice(0, 8)) {
+        rows.push([{ text: `💍 ${r.base_id} ${r.rarity} · ~$${price('relic').toFixed(2)}`, callback_data: `/sp r ${r.id}` }]);
+      }
+      // 🐾 Creatures (Common surplus only in quick-list — protects producers/breeders)
+      for (const c of (player.creatures || []).filter((x) => x.rarity === 'Common' && !x.listed && !x.stored && !x.run_id).slice(0, 8)) {
+        rows.push([{ text: `🐾 ${c.creature_id} ${c.stage} · ~$${price('creature').toFixed(2)}`, callback_data: `/sp c ${c.id}` }]);
+      }
+      // 🥚 Eggs (unhatched, not listed) — all types; user decides
+      for (const e of (player.eggs || []).filter((x) => x.status !== 'hatched' && !x.creature_id && !x.listed).slice(0, 6)) {
+        rows.push([{ text: `🥚 ${e.egg_type} egg · ~$${price('egg').toFixed(2)}`, callback_data: `/sp e ${e.id}` }]);
       }
 
-      const mats = player.materials || [];
-      if (mats.length) {
-        lines.push('', '⛏️ <b>Materials:</b>');
-        for (const m of mats) {
-          const q = Math.min(Number(m.quantity || 0), 2000);
-          const unit = matFloor[m.material_id] ? matFloor[m.material_id] * 0.97 : 0.0001;
-          lines.push(`• ${esc(m.material_id)} ×${fmtN(m.quantity)}`);
-          lines.push(`  <code>/sell material ${esc(m.material_id)} ${(unit * q).toFixed(4)} ${q}</code>`);
-        }
+      if (!rows.length) return tg.notify('🏷️ <b>Nothing sellable right now.</b>\nGrind a bit — surplus gold/materials/creatures will show up here.', menuMarkup);
+      rows.push([{ text: '📄 My Listings', callback_data: '/listings' }, { text: '⬅️ Back', callback_data: '/market' }]);
+      return tg.notify([
+        '<b>🏷️ SELL — tap an item</b>',
+        '━━━━━━━━━━━━━━━━━━━━',
+        '<i>Prices shown are the market floor. After tapping you can confirm or set your own price/qty.</i>',
+      ].join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
+    // Pick an item to sell: /sp <t> <ref>  (t = g|m|k|r|c|e)
+    case '/sp': {
+      const map = { g: 'gold', m: 'material', k: 'cosmetic', r: 'relic', c: 'creature', e: 'egg' };
+      const kind = map[args[0]];
+      const ref = args[1];
+      if (!kind || !ref) return tg.notify('❌ Bad selection. Open /sell again.', menuMarkup);
+      const summary = state.data.market?.summary || {};
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load inventory. Try again.', menuMarkup); }
+      const acct = player.player || player;
+
+      let name = kind; let unit = 0; let needsQty = false; let qtyDefault = 1; let maxQty = 1;
+      if (kind === 'gold') {
+        const gold = Number(acct.gold || 0);
+        if (gold <= 1000) return tg.notify('❌ Not enough gold to sell.', menuMarkup);
+        needsQty = true; maxQty = gold; qtyDefault = Math.min(gold - 1000, 300000);
+        unit = sellUnitFloor(summary, 'gold') * 0.97; name = 'Gold';
+      } else if (kind === 'material') {
+        const held = (player.materials || []).find((m) => m.material_id === ref);
+        if (!held) return tg.notify(`❌ Material <code>${esc(ref)}</code> not found.`, menuMarkup);
+        const matFloor = {};
+        try {
+          const mb = await client.market('material', { sort: 'cheap', limit: 50 });
+          for (const l of (mb?.listings || [])) { const u = Number(l.price_usd) / Math.max(1, Number(l.quantity || 1)); if (l.resource && u > 0) matFloor[l.resource] = Math.min(matFloor[l.resource] ?? Infinity, u); }
+        } catch { /* placeholder */ }
+        needsQty = true; maxQty = Number(held.quantity); qtyDefault = Math.min(maxQty, 2000);
+        unit = sellUnitFloor(summary, 'material', matFloor, ref) * 0.97; name = ref;
+      } else {
+        const pool = kind === 'cosmetic' ? player.cosmetics : kind === 'relic' ? player.relics : kind === 'creature' ? player.creatures : player.eggs;
+        const it = (pool || []).find((x) => x.id === ref);
+        if (!it) return tg.notify(`❌ ${esc(kind)} not found (maybe already sold).`, menuMarkup);
+        unit = sellUnitFloor(summary, kind) * 0.97; name = itemLabel(kind, it);
       }
 
-      const spare = (player.creatures || []).filter((c) => c.rarity === 'Common' && !c.listed && !c.stored).slice(0, 6);
-      lines.push('', `🐾 <b>Creatures</b> (Common — ${spare.length} bisa dijual):`);
-      for (const c of spare) {
-        lines.push(`• ${esc(c.creature_id)} ${esc(c.rarity)}/${esc(c.stage)}`);
-        lines.push(`  <code>/sell creature ${esc(c.id)} ${cPrice}</code>`);
-      }
+      const total = needsQty ? unit * qtyDefault : unit;
+      state.data.pendingSale = { kind, ref, name, unit, needsQty, qtyDefault, maxQty, ts: Date.now() };
+      state.save();
+      const priceStr = `$${total.toFixed(total < 0.01 ? 4 : 2)}`;
+      const lines = [
+        `<b>🏷️ Sell: ${esc(name)}</b>`,
+        '━━━━━━━━━━━━━━━━━━━━',
+        needsQty ? `Suggested: <b>${priceStr}</b> for <b>${short(qtyDefault)}</b> (floor price).` : `Suggested price: <b>${priceStr}</b> (floor).`,
+        '',
+        needsQty
+          ? `✍️ Or type your own: <code>&lt;total$&gt; &lt;qty&gt;</code>  (e.g. <code>0.20 ${qtyDefault}</code>)`
+          : '✍️ Or type your own price, e.g. <code>0.25</code>',
+      ];
+      const rows = [
+        [{ text: `✅ List at ${priceStr}`, callback_data: '/sg' }],
+        [{ text: '✖️ Cancel', callback_data: '/sell' }],
+      ];
+      return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
 
-      const be = (player.eggs || []).filter((e) => e.egg_type === 'basic' && e.status !== 'hatched' && !e.creature_id && !e.listed).slice(0, 3);
-      if (be.length) {
-        lines.push('', `🥚 <b>Basic eggs</b> (${be.length}):`);
-        for (const e of be) lines.push(`  <code>/sell egg ${esc(e.id)} ${eP}</code>`);
-      }
-
-      lines.push('', '📄 Listing aktif: /listings  ·  ❌ Batal: /cancel &lt;id&gt;');
-      return tg.notify(lines.join('\n'), menuMarkup);
+    // Confirm sale at the suggested price/qty.
+    case '/sg': {
+      const ps = state.data.pendingSale;
+      if (!ps) return tg.notify('❌ Nothing pending. Open /sell.', menuMarkup);
+      state.data.pendingSale = null; state.save();
+      const total = ps.needsQty ? ps.unit * ps.qtyDefault : ps.unit;
+      return performList(client, tg, sellPayload(ps, total, ps.qtyDefault));
     }
 
     case '/leaderboard': {
@@ -808,6 +866,57 @@ function esc(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
 }
 
+// Compact number for button labels: 12345 -> "12.3k".
+function short(n) {
+  const v = Number(n || 0);
+  if (v >= 1000000) return `${(v / 1000000).toFixed(1)}M`;
+  if (v >= 1000) return `${(v / 1000).toFixed(1)}k`;
+  return String(Math.round(v));
+}
+
+// Market floor per unit for a sell kind (fallbacks when no market data cached).
+const SELL_FALLBACK = { creature: 0.03, egg: 0.05, cosmetic: 0.15, relic: 0.05, gem: 0.2 };
+function sellUnitFloor(summary, kind, matFloor, resource) {
+  if (kind === 'material') return matFloor?.[resource] || 0.0005;
+  if (kind === 'gold') { const f = Number(summary?.gold?.floorUnitUsd); return f > 0 ? f : 1 / 320000; }
+  const f = Number(summary?.[kind]?.floorUnitUsd);
+  return f > 0 ? f : (SELL_FALLBACK[kind] || 0.05);
+}
+
+// Human label for an inventory item, per kind.
+function itemLabel(kind, o) {
+  if (!o) return kind;
+  switch (kind) {
+    case 'creature': return `${o.creature_id} ${o.rarity || ''}/${o.stage || ''}`;
+    case 'egg': return `${o.egg_type} egg`;
+    case 'relic': return `${o.base_id} ${o.rarity || ''}`;
+    case 'cosmetic': return `${o.cosmetic_id} (${o.slot || ''})`;
+    default: return kind;
+  }
+}
+
+// Build a /api/market/list payload from a pending sale + chosen price/qty.
+function sellPayload(ps, priceUsd, qty) {
+  const p = { itemKind: ps.kind, currency: 'zenko', priceUsd: Number(priceUsd) };
+  if (ps.needsQty) { p.quantity = Math.floor(qty); if (ps.kind === 'material') p.resource = ps.ref; }
+  else { p.itemId = ps.ref; }
+  return p;
+}
+
+// Execute a market listing and reply with a clear confirmation.
+async function performList(client, tg, payload) {
+  const menuMarkup = { reply_markup: tg.mainKeyboard() };
+  const res = await client.marketList(payload).catch((e) => ({ error: e.message }));
+  if (res?.error) return tg.notify(`❌ List failed: <code>${esc(res.error)}</code>`, menuMarkup);
+  const qtyStr = payload.quantity ? ` ×${Number(payload.quantity).toLocaleString('en-US')}` : '';
+  return tg.notify([
+    '🏷️ <b>LISTED ON MARKET!</b>',
+    `${esc(payload.resource || payload.itemKind)}${qtyStr} — <b>$${payload.priceUsd}</b>`,
+    "You'll get a 💰 alert when it sells.",
+    'Manage: /listings · cancel with <code>/cancel &lt;id&gt;</code>',
+  ].join('\n'), menuMarkup);
+}
+
 // Send any messages the strategy queued during the cycle (e.g. autopilot gacha drops).
 async function drainNotifications(telegram, state) {
   const queue = Array.isArray(state.data.notify) ? state.data.notify : [];
@@ -817,7 +926,7 @@ async function drainNotifications(telegram, state) {
   for (const item of queue) {
     if (item?.type === 'gacha') {
       const cards = formatGachaCards(item.gacha);
-      if (cards) await telegram.notify(`🎰 <b>Auto-gacha ${esc(item.gacha?.tier || '')} — DAPAT:</b>\n━━━━━━━━━━━━━━━━━━━━\n${cards}`);
+      if (cards) await telegram.notify(`🎰 <b>Auto-gacha ${esc(item.gacha?.tier || '')} — GOT:</b>\n━━━━━━━━━━━━━━━━━━━━\n${cards}`);
     } else if (item?.text) {
       await telegram.notify(item.text);
     }
