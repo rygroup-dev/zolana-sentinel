@@ -1474,7 +1474,8 @@ export class StrategyEngine {
       .sort((a, b) => coinsPerHour(a) - coinsPerHour(b));
 
     if (
-      spareCreatures.length > config.ZOLANA_MARKET_KEEP_CREATURES
+      config.ZOLANA_AUTO_SELL_CREATURE
+      && spareCreatures.length > config.ZOLANA_MARKET_KEEP_CREATURES
       && this.state.ready('market:list:creature')
     ) {
       const creature = spareCreatures[0];
@@ -1509,7 +1510,7 @@ export class StrategyEngine {
 
     // --- Sell surplus gold at the market gold floor (undercut so it sells) ---
     const gold = Number(account.gold || 0);
-    if (gold > config.ZOLANA_MARKET_KEEP_GOLD * 2 && this.state.ready('market:list:gold')) {
+    if (config.ZOLANA_AUTO_SELL_GOLD && gold > config.ZOLANA_MARKET_KEEP_GOLD * 2 && this.state.ready('market:list:gold')) {
       const quantity = Math.floor(Math.min(gold - config.ZOLANA_MARKET_KEEP_GOLD, 300_000));
       const goldFloor = Number(summary.gold?.floorUnitUsd);
       const unit = Number.isFinite(goldFloor) && goldFloor > 0

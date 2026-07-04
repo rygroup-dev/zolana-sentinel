@@ -41,6 +41,11 @@ const schema = z.object({
   ZOLANA_AUTO_MARKET: z.coerce.boolean().default(true),
   ZOLANA_AUTO_MARKET_BUY: z.coerce.boolean().default(true),
   ZOLANA_AUTO_MARKET_SELL: z.coerce.boolean().default(true),
+  // Auto-sell gold and creatures is OFF by default — the user sells those manually
+  // via /sell (they're worth far more than the tiny auto-undercut price). Materials
+  // and basic eggs still auto-list. Set true to re-enable autopilot gold/creature sells.
+  ZOLANA_AUTO_SELL_GOLD: z.coerce.boolean().default(false),
+  ZOLANA_AUTO_SELL_CREATURE: z.coerce.boolean().default(false),
   ZOLANA_MARKET_MAX_BUY_USD: z.coerce.number().min(0).default(1.1),
   ZOLANA_MARKET_MAX_BUYS_PER_CYCLE: z.coerce.number().int().min(0).max(5).default(1),
   ZOLANA_MARKET_MIN_EDGE_BPS: z.coerce.number().int().min(0).default(1800),
