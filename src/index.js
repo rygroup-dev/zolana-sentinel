@@ -683,6 +683,102 @@ async function handleCommand(command, tg, engine, state) {
       return tg.notify('🥚 <b>Incubation started!</b>\nCheck the timer with /hatch.', menuMarkup);
     }
 
+    // 🗄️ Vault — move creatures to/from storage to free active-roster room (kept safe).
+    case '/vault': {
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
+      const cr = player.creatures || [];
+      const vaulted = (player.stored?.creatures) || [];
+      const cap = Number((player.player || {}).storage_cap || 100);
+      const active = cr.filter((c) => !c.stored && !isPlacedC(c) && !c.run_id && !c.listed).sort((a, b) => creatureValue(a) - creatureValue(b));
+      const lines = [
+        '<b>🗄️ VAULT</b>', '━━━━━━━━━━━━━━━━━━━━',
+        `📦 Stored: <b>${vaulted.length}/${cap}</b>  ·  🐾 Active roster: <b>${cr.filter((c) => !c.stored).length}</b>`,
+        '<i>Vaulting frees roster room without losing the creature. Tap one to vault it; tap a stored one to pull it back.</i>', '',
+      ];
+      const rows = [];
+      for (const c of active.slice(0, 8)) rows.push([{ text: `🗄️ ${c.rarity} ${c.creature_id} L${c.level}`.slice(0, 45), callback_data: `/vm ${c.id}` }]);
+      for (const c of vaulted.slice(0, 6)) rows.push([{ text: `↩️ Unvault ${c.rarity} ${c.creature_id}`.slice(0, 45), callback_data: `/vm ${c.id} u` }]);
+      if (!rows.length) return tg.notify('🗄️ Nothing free to vault (all creatures are placed/raiding/listed).', menuMarkup);
+      rows.push([{ text: '🐣 Hatch', callback_data: '/hatch' }, { text: '⬅️ Back', callback_data: '/start' }]);
+      return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
+    case '/vm': {
+      const id = args[0];
+      const store = args[1] !== 'u';
+      if (!id) return tg.notify('❌ No creature selected. Open /vault.', menuMarkup);
+      const res = await client.storageMove('creature', id, store).catch((e) => ({ error: e.message }));
+      if (res?.error) return tg.notify(`❌ ${store ? 'Vault' : 'Unvault'} failed: <code>${esc(res.error)}</code>`, menuMarkup);
+      return tg.notify(store ? '🗄️ <b>Vaulted</b> — roster slot freed. Open /vault or /hatch.' : '↩️ <b>Pulled back</b> from vault into your roster.', { reply_markup: { inline_keyboard: [[{ text: '🗄️ Vault', callback_data: '/vault' }, { text: '🐣 Hatch', callback_data: '/hatch' }]] } });
+    }
+
+    // ⚔️ Sacrifice — feed spare Common creatures into your strongest (XP + frees roster).
+    case '/sacrifice': {
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
+      const cr = player.creatures || [];
+      const target = [...cr].filter((c) => !c.stored).sort((a, b) => creatureValue(b) - creatureValue(a))[0];
+      if (!target) return tg.notify('⚔️ No creatures to sacrifice into.', menuMarkup);
+      const fodder = cr.filter((c) => c.rarity === 'Common' && !isPlacedC(c) && !c.run_id && !c.listed && !c.stored && c.id !== target.id);
+      if (!fodder.length) return tg.notify('⚔️ No spare Common creatures to sacrifice (placed/raiding ones are protected).', menuMarkup);
+      const n = Math.min(fodder.length, 10);
+      const lines = [
+        '<b>⚔️ SACRIFICE</b>', '━━━━━━━━━━━━━━━━━━━━',
+        `🎯 Target (gets XP): <b>${RARITY_EMOJI2[target.rarity] || ''}${target.creature_id}</b> ${target.rarity}/${target.stage} L${target.level}`,
+        `🔥 Spare Commons available: <b>${fodder.length}</b>`,
+        '', `This will feed <b>${n}</b> Common creatures into your target — they are consumed, target gains XP, and <b>${n}</b> roster slots free up.`,
+      ];
+      const rows = [
+        [{ text: `⚔️ Sacrifice ${n} Common → ${target.creature_id}`.slice(0, 45), callback_data: `/sac ${target.id} ${n}` }],
+        [{ text: '✖️ Cancel', callback_data: '/start' }],
+      ];
+      return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
+    case '/sac': {
+      const targetId = args[0];
+      const count = Math.min(Number(args[1]) || 0, 15);
+      if (!targetId || !count) return tg.notify('❌ Bad selection. Open /sacrifice.', menuMarkup);
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
+      const target = (player.creatures || []).find((c) => c.id === targetId);
+      if (!target) return tg.notify('❌ Target creature not found. Open /sacrifice.', menuMarkup);
+      const fodder = (player.creatures || []).filter((c) => c.rarity === 'Common' && !isPlacedC(c) && !c.run_id && !c.listed && !c.stored && c.id !== targetId).slice(0, count);
+      if (!fodder.length) return tg.notify('⚔️ No spare Common creatures left.', menuMarkup);
+      const res = await client.sacrifice(targetId, fodder.map((c) => c.id)).catch((e) => ({ error: e.message }));
+      if (res?.error) return tg.notify(`❌ Sacrifice failed: <code>${esc(res.error)}</code>`, menuMarkup);
+      return tg.notify([
+        '<b>⚔️ SACRIFICED!</b>',
+        `🔥 ${fodder.length} Common → 🎯 <b>${esc(target.creature_id)}</b>`,
+        `Roster freed by ${fodder.length}. Target gained XP.`,
+      ].join('\n'), { reply_markup: { inline_keyboard: [[{ text: '⚔️ Again', callback_data: '/sacrifice' }, { text: '🐣 Hatch', callback_data: '/hatch' }]] } });
+    }
+
+    // ⬆️ Buy a storage capacity upgrade (server deducts the cost, usually gold).
+    case '/upgrade': {
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load account. Try again.', menuMarkup); }
+      const acct = player.player || {};
+      const cap = Number(acct.storage_cap || 100);
+      if (args[0] !== 'CONFIRM') {
+        return tg.notify([
+          '<b>⬆️ UPGRADE STORAGE</b>', '━━━━━━━━━━━━━━━━━━━━',
+          `📦 Current capacity: <b>${cap}</b>`,
+          `🪙 Your gold: <b>${Number(acct.gold || 0).toLocaleString('en-US')}</b>`,
+          '', '<i>Buys +capacity (cost scales, paid in gold — server-enforced). Confirm to buy.</i>',
+        ].join('\n'), { reply_markup: { inline_keyboard: [[{ text: '✅ Buy upgrade', callback_data: '/upgrade CONFIRM' }], [{ text: '✖️ Cancel', callback_data: '/start' }]] } });
+      }
+      const res = await client.storageUpgrade().catch((e) => ({ error: e.message }));
+      if (res?.error) return tg.notify(`❌ Upgrade failed: <code>${esc(res.error)}</code>`, menuMarkup);
+      const newCap = res?.player?.storage_cap ?? res?.storage_cap ?? (cap + '?');
+      return tg.notify(`⬆️ <b>Storage upgraded!</b>\n📦 New capacity: <b>${esc(newCap)}</b>`, menuMarkup);
+    }
+
     case '/cancel': {
       const id = args[0];
       if (!id) return tg.notify('Format: <code>/cancel &lt;listingId&gt;</code>');
@@ -935,6 +1031,17 @@ async function handleCommand(command, tg, engine, state) {
 
 function esc(value) {
   return String(value ?? '').replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;');
+}
+
+// Creature value ranking (for choosing weakest to vault/sacrifice, strongest as target).
+const RARITY_BASE = { Common: 10, Uncommon: 40, Rare: 200, Epic: 1200, Legendary: 5000, Mythical: 25000 };
+const VARIANT_MULT = { Normal: 1, Shiny: 2, Golden: 5, Shadow: 7, Rainbow: 15 };
+const RARITY_EMOJI2 = { Common: '⚪', Uncommon: '🟢', Rare: '🔵', Epic: '🟣', Legendary: '🟡', Mythical: '🔴' };
+function creatureValue(c) {
+  return (RARITY_BASE[c.rarity] || 10) * (VARIANT_MULT[c.variant] || 1) * (1 + 0.015 * ((c.level || 1) - 1));
+}
+function isPlacedC(c) {
+  return c.placed || (c.plot_x !== null && c.plot_x !== undefined);
 }
 
 // Compact number for button labels: 12345 -> "12.3k".

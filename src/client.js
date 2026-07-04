@@ -234,6 +234,17 @@ export class ZolanaClient {
     return this.post('/api/creature/sacrifice', { targetId, fodderIds });
   }
 
+  // Move an item to/from storage (vault). store=true vaults it (frees active roster);
+  // store=false pulls it back out. itemKind: creature|egg|cosmetic|relic.
+  async storageMove(itemKind, itemId, store = true) {
+    return this.post('/api/storage/move', { itemKind, itemId, store });
+  }
+
+  // Buy a storage capacity upgrade (server-side cost deduction; no signature needed).
+  async storageUpgrade() {
+    return this.post('/api/storage/upgrade', {});
+  }
+
   async pvp() {
     return this.get('/api/pvp');
   }

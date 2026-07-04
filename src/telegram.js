@@ -144,6 +144,11 @@ export class TelegramBot {
           { text: '🎒 Inventory', callback_data: '/inventory' },
         ],
         [
+          { text: '🗄️ Vault', callback_data: '/vault' },
+          { text: '⚔️ Sacrifice', callback_data: '/sacrifice' },
+          { text: '⬆️ Upgrade', callback_data: '/upgrade' },
+        ],
+        [
           { text: '🎰 Gacha', callback_data: '/gacha' },
           { text: '💎 Buy Gems', callback_data: '/buygems' },
           { text: '🛒 Store', callback_data: '/store' },
@@ -242,6 +247,9 @@ export class TelegramBot {
       { command: 'evolve', description: '🧬 Evolve all eligible creatures' },
       { command: 'breed', description: '🧬 Breed Adult+ (higher rarity)' },
       { command: 'hatch', description: '🐣 Hatch/incubate eggs (pick from list)' },
+      { command: 'vault', description: '🗄️ Vault creatures to free roster room' },
+      { command: 'sacrifice', description: '⚔️ Sacrifice spare Commons for XP + room' },
+      { command: 'upgrade', description: '⬆️ Buy storage capacity upgrade' },
       { command: 'relic', description: '💍 Craft+equip relic' },
       { command: 'epoch', description: '🌌 Epoch donate → $ZOLANA rebate' },
       { command: 'inventory', description: '🎒 Bag: creatures/eggs/relics/materials' },
