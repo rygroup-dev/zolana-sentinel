@@ -112,9 +112,10 @@ const schema = z.object({
   // stats (more party power). Keep a small reserve so we don't dump every shard.
   ZOLANA_AUTO_RELIC_ENHANCE: z.coerce.boolean().default(true),
   ZOLANA_RELIC_SHARD_KEEP: z.coerce.number().int().min(0).default(0),
-  // Relic enhance is now a deep GOLD sink (post-rework). Only enhance when gold is
-  // comfortably above this floor so it never eats into the d_gold quest reserve.
-  ZOLANA_RELIC_ENHANCE_GOLD_FLOOR: z.coerce.number().int().min(0).default(45000),
+  // Relic enhance is now a VERY deep GOLD sink (~57k+ per enhance, scales with level).
+  // Only enhance when gold is genuinely abundant so it never starves the d_gold quest
+  // reserve or evolve budget — those matter far more than relic power for a poor account.
+  ZOLANA_RELIC_ENHANCE_GOLD_FLOOR: z.coerce.number().int().min(0).default(150000),
   // Auto-dismantle junk (low-rarity, unequipped) relics into relic_shard = enhance fuel.
   ZOLANA_AUTO_RELIC_DISMANTLE: z.coerce.boolean().default(true),
   ZOLANA_RELIC_DISMANTLE_PER_CYCLE: z.coerce.number().int().min(1).max(10).default(4),

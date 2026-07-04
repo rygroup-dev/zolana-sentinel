@@ -342,7 +342,7 @@ export class StrategyEngine {
   logHistory(text) {
     const h = list(this.state.data.history);
     h.push({ t: Date.now(), text });
-    this.state.data.history = h.slice(-40);
+    this.state.data.history = h.slice(-60);
   }
 
   // Notify + log when a NEW egg shows up in the bag (from gacha, breeding, drops, or
@@ -529,6 +529,7 @@ export class StrategyEngine {
       if (result) {
         claimed += 1;
         logger.info({ quest: quest.id, metric: quest.metric }, 'quest claimed (+150 acct xp)');
+        this.logHistory(`✅ Quest claimed: ${quest.id} (+150 xp)`);
       }
     }
     this.state.cooldown('quests', claimed > 0 ? 5 * 60 * 1000 : QUESTS_COOLDOWN_MS);
@@ -618,6 +619,7 @@ export class StrategyEngine {
         budget -= cost;
         evolved += 1;
         logger.info({ creature: c.id, from: info.stage, cost }, 'creature evolved');
+        this.logHistory(`🧬 Evolved ${c.creature_id || 'creature'} (${info.stage}→next, −${Number(cost).toLocaleString('en-US')} gold)`);
       }
     }
     this.state.cooldown('evolve', evolved > 0 ? EVOLVE_COOLDOWN_MS : 5 * 60 * 1000);
@@ -688,7 +690,7 @@ export class StrategyEngine {
     }
     const res = await this.safeAct('companion', () => this.client.companion(strongest.id));
     this.state.cooldown('companion', res ? 6 * 60 * 60 * 1000 : 30 * 60 * 1000);
-    if (res) logger.info({ companion: strongest.id }, 'companion set (party power buff)');
+    if (res) { logger.info({ companion: strongest.id }, 'companion set (party power buff)'); this.logHistory(`🐾 Companion set: ${strongest.creature_id || 'strongest'} (party power ↑)`); }
   }
 
   // Spend gems on the best creature source. Premium egg (50 gems) guarantees
@@ -740,7 +742,7 @@ export class StrategyEngine {
     }
     const res = await this.safeAct('gemCraft', () => this.client.gemCraft());
     this.state.cooldown('gemcraft', res ? 10 * 60 * 1000 : 60 * 60 * 1000);
-    if (res) logger.info('crafted gems from gem_catalyst');
+    if (res) { logger.info('crafted gems from gem_catalyst'); this.logHistory('💠 Crafted gems from gem_catalyst (−90k gold)'); }
   }
 
   // Relics: craft + equip to unlock the d_equip (+150 acct XP/day, recurring) and
@@ -774,6 +776,7 @@ export class StrategyEngine {
     this.state.cooldown('relic', crafted ? 30 * 60 * 1000 : 60 * 60 * 1000);
     if (crafted) {
       logger.info({ slot }, 'relic crafted');
+      this.logHistory(`💍 Crafted relic (${slot})`);
       const fresh = playerFrom(await this.client.loadPlayer().catch(() => null));
       if (fresh) await this.ensureRelicEquipped(fresh, list(fresh?.relics));
     }
@@ -861,7 +864,7 @@ export class StrategyEngine {
     }
     const res = await this.safeAct(`relicEnhance:${relicId}`, () => this.client.relicEnhance(relicId));
     this.state.cooldown('relicEnhance', res ? 20 * 60 * 1000 : 60 * 60 * 1000);
-    if (res) logger.info({ relicId }, 'relic enhanced (party power up)');
+    if (res) { logger.info({ relicId }, 'relic enhanced (party power up)'); this.logHistory('⚒️ Relic enhanced (party power ↑)'); }
   }
 
   // Epoch: donate a full recipe of surplus gold + materials during a funding window
@@ -962,6 +965,7 @@ export class StrategyEngine {
     const phase = decideRaidPhase(prev, stamina, { cheapest, refillFrac: config.ZOLANA_RAID_REFILL_FRAC });
     if (!prev || prev.phase !== phase.phase) {
       logger.info({ from: prev?.phase || 'init', to: phase.phase, stamina, staminaMax: phase.staminaMax }, 'raid phase switch');
+      this.logHistory(phase.phase === 'raid' ? '⚔️ Switched to RAID (stamina full)' : '🌾 Switched to FARM (stamina low)');
       // Notify on the TRANSITION only (never every cycle) so the activity feed isn't spammed.
       const pct = phase.staminaMax ? Math.round((stamina / phase.staminaMax) * 100) : 0;
       const msg = phase.phase === 'raid'

@@ -184,7 +184,7 @@ async function handleCommand(command, tg, engine, state) {
       const h = Array.isArray(state.data.history) ? state.data.history : [];
       if (!h.length) return tg.notify('📜 <b>No history yet.</b>\nEvents (sales, hatches, new eggs, sacrifices…) will appear here.', menuMarkup);
       const lines = ['<b>📜 ACTIVITY HISTORY</b>', '━━━━━━━━━━━━━━━━━━━━'];
-      for (const e of h.slice(-15).reverse()) {
+      for (const e of h.slice(-20).reverse()) {
         const hh = new Date(e.t).toISOString().slice(11, 16);
         lines.push(`<code>${hh}</code>  ${esc(e.text)}`);
       }
@@ -1096,7 +1096,7 @@ function sellUnitFloor(summary, kind, matFloor, resource) {
 function logHistory(state, text) {
   const h = Array.isArray(state.data.history) ? state.data.history : [];
   h.push({ t: Date.now(), text });
-  state.data.history = h.slice(-40);
+  state.data.history = h.slice(-60);
   state.save();
 }
 
