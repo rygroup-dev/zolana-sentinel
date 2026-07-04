@@ -783,9 +783,12 @@ export class StrategyEngine {
       .filter((c) => c.id && !c.stored && !c.listed)
       .sort((a, b) => byWeakestCreature(b, a)); // strongest first
     const rank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+    const combat = (r) => (r.class === 'combat' ? 1 : 0);
+    // Equip the best relics first: COMBAT-class (raw party power, enhanceable ×3) before
+    // utility, then by rarity. Skip anything listed/stored so we never equip a for-sale relic.
     const unequipped = relics
-      .filter((r) => !r.equipped_on)
-      .sort((a, b) => (rank[b.rarity] || 0) - (rank[a.rarity] || 0));
+      .filter((r) => !r.equipped_on && !r.listed && !r.stored)
+      .sort((a, b) => combat(b) - combat(a) || (rank[b.rarity] || 0) - (rank[a.rarity] || 0));
 
     for (const relic of unequipped) {
       const relicId = relic.id || relic.relic_id;
@@ -800,12 +803,15 @@ export class StrategyEngine {
       if (!equipped) break; // action budget hit or nowhere to place — try next cycle
     }
 
-    // Enhance the BEST equipped relic (rarest, then least-enhanced) with surplus
-    // relic_shard → most party power per shard.
+    // Enhance the BEST equipped relic with surplus relic_shard → most party power per
+    // shard. Post-rework, COMBAT-class relics stack power above the cap (up to ×3), so
+    // prioritise those; then rarest, then least-enhanced.
     const erank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+    const isCombat = (r) => (r.class === 'combat' ? 1 : 0);
     const toEnhance = relics
       .filter((r) => r.equipped_on)
-      .sort((a, b) => (erank[b.rarity] || 0) - (erank[a.rarity] || 0)
+      .sort((a, b) => isCombat(b) - isCombat(a)
+        || (erank[b.rarity] || 0) - (erank[a.rarity] || 0)
         || (Number(a.enhance_level) || 0) - (Number(b.enhance_level) || 0))[0];
     if (toEnhance) await this.enhanceRelic(player, toEnhance);
   }
@@ -819,6 +825,12 @@ export class StrategyEngine {
     if (!relicId) return;
     const shards = list(player?.materials).find((m) => m.material_id === 'relic_shard');
     if (!shards || Number(shards.quantity || 0) <= config.ZOLANA_RELIC_SHARD_KEEP) {
+      this.state.cooldown('relicEnhance', 60 * 60 * 1000);
+      return;
+    }
+    // Post-rework the enhance is a deep GOLD sink — only spend when gold is above the
+    // floor so it never drains into the d_gold quest reserve.
+    if (Number(actor(player).gold || 0) < config.ZOLANA_RELIC_ENHANCE_GOLD_FLOOR) {
       this.state.cooldown('relicEnhance', 60 * 60 * 1000);
       return;
     }

@@ -112,6 +112,9 @@ const schema = z.object({
   // stats (more party power). Keep a small reserve so we don't dump every shard.
   ZOLANA_AUTO_RELIC_ENHANCE: z.coerce.boolean().default(true),
   ZOLANA_RELIC_SHARD_KEEP: z.coerce.number().int().min(0).default(0),
+  // Relic enhance is now a deep GOLD sink (post-rework). Only enhance when gold is
+  // comfortably above this floor so it never eats into the d_gold quest reserve.
+  ZOLANA_RELIC_ENHANCE_GOLD_FLOOR: z.coerce.number().int().min(0).default(45000),
   ZOLANA_SLOT_BUY_GOLD_FLOOR: z.coerce.number().int().min(0).default(60000),
   ZOLANA_EGG_RESERVE_TARGET: z.coerce.number().int().min(0).default(0),
   ZOLANA_EGG_BUY_GOLD_FLOOR: z.coerce.number().int().min(0).default(50000),
