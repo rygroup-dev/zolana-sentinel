@@ -596,12 +596,16 @@ export class StrategyEngine {
     this.state.cooldown('placement', 15 * 60 * 1000);
   }
 
-  async evolveBest(player) {
-    if (!this.toggle('evolve', config.ZOLANA_AUTO_EVOLVE)) return;
-    if (!this.state.ready('evolve')) return;
+  // force=true → manual Telegram trigger: evolve even when auto-evolve is toggled OFF
+  // (the user turned off the autopilot on purpose but is asking for it explicitly now).
+  async evolveBest(player, force = false) {
+    if (!force && !this.toggle('evolve', config.ZOLANA_AUTO_EVOLVE)) return;
+    if (!force && !this.state.ready('evolve')) return;
 
     let gold = Number(actor(player).gold || 0);
-    let budget = config.ZOLANA_EVOLVE_CYCLE_BUDGET;
+    // Manual "Evolve N ready now" should clear the whole ready list (bounded only by the
+    // gold reserve); autopilot stays throttled to the per-cycle budget so it drip-feeds.
+    let budget = force ? Number.MAX_SAFE_INTEGER : config.ZOLANA_EVOLVE_CYCLE_BUDGET;
 
     // Push the most-advanced creatures first so a few reach Elder (battle-capable)
     // instead of spreading gold thin. Only spend surplus above the gold reserve.

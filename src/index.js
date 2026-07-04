@@ -259,7 +259,7 @@ async function handleCommand(command, tg, engine, state) {
 
       if (args[0] === 'GO') {
         state.data.cooldowns.evolve = 0;
-        await engine.evolveBest(player);
+        await engine.evolveBest(player, true); // force: run even though auto-evolve is toggled OFF
         return tg.notify('🧬 Evolving all <b>ready</b> creatures now (Common skipped · Adult→Elder Epic/Legendary only · within gold budget).', menuMarkup);
       }
 
