@@ -115,6 +115,9 @@ const schema = z.object({
   // Relic enhance is now a deep GOLD sink (post-rework). Only enhance when gold is
   // comfortably above this floor so it never eats into the d_gold quest reserve.
   ZOLANA_RELIC_ENHANCE_GOLD_FLOOR: z.coerce.number().int().min(0).default(45000),
+  // Auto-dismantle junk (low-rarity, unequipped) relics into relic_shard = enhance fuel.
+  ZOLANA_AUTO_RELIC_DISMANTLE: z.coerce.boolean().default(true),
+  ZOLANA_RELIC_DISMANTLE_PER_CYCLE: z.coerce.number().int().min(1).max(10).default(4),
   ZOLANA_SLOT_BUY_GOLD_FLOOR: z.coerce.number().int().min(0).default(60000),
   ZOLANA_EGG_RESERVE_TARGET: z.coerce.number().int().min(0).default(0),
   ZOLANA_EGG_BUY_GOLD_FLOOR: z.coerce.number().int().min(0).default(50000),

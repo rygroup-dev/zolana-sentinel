@@ -754,6 +754,9 @@ export class StrategyEngine {
     // Always keep at least one relic equipped so d_equip stays claimable.
     if (owned.length > 0) await this.ensureRelicEquipped(player, owned);
 
+    // Recycle junk (low-rarity, unequipped) relics into relic_shard = enhance fuel.
+    await this.dismantleJunkRelics(player);
+
     if (owned.length >= config.ZOLANA_RELIC_TARGET) {
       this.state.cooldown('relic', 6 * 60 * 60 * 1000);
       return;
@@ -774,6 +777,28 @@ export class StrategyEngine {
       const fresh = playerFrom(await this.client.loadPlayer().catch(() => null));
       if (fresh) await this.ensureRelicEquipped(fresh, list(fresh?.relics));
     }
+  }
+
+  // Break junk (Common/Uncommon, UNEQUIPPED) relics into relic_shard so the enhance
+  // autopilot always has fuel. Never touches equipped/bound/soulbound/listed relics or
+  // Rare+ (those are kept for equipping/selling). Permanent — hence low-rarity only.
+  async dismantleJunkRelics(player) {
+    if (!this.toggle('relicDismantle', config.ZOLANA_AUTO_RELIC_DISMANTLE)) return;
+    if (!this.state.ready('relicDismantle')) return;
+    const junk = list(player?.relics).filter((r) => AUTO_SELL_RARITIES.has(r.rarity)
+      && !r.equipped_on && !r.bound && !r.soulbound && !r.listed && !r.stored);
+    if (!junk.length) { this.state.cooldown('relicDismantle', 60 * 60 * 1000); return; }
+    let done = 0;
+    for (const relic of junk.slice(0, config.ZOLANA_RELIC_DISMANTLE_PER_CYCLE)) {
+      const id = relic.id || relic.relic_id;
+      if (!id) continue;
+      const res = await this.safeAct(`relicDismantle:${id}`, () => this.client.relicDismantle(id));
+      if (!res) break; // action budget hit — resume next cycle
+      done += 1;
+      logger.info({ relicId: id, rarity: relic.rarity }, 'relic dismantled → shards');
+    }
+    if (done) this.logHistory(`🔨 Dismantled ${done} junk relic${done > 1 ? 's' : ''} → shards`);
+    this.state.cooldown('relicDismantle', done ? 10 * 60 * 1000 : 60 * 60 * 1000);
   }
 
   async ensureRelicEquipped(player, relics) {

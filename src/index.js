@@ -62,7 +62,7 @@ async function main() {
   } while (true);
 }
 
-const AUTO_KEYS = new Set(['afk', 'claims', 'quests', 'dungeon', 'evolve', 'breed', 'gacha', 'premiumEgg', 'gemcraft', 'buyegg', 'autostamina', 'relic', 'relicEnhance', 'companion', 'epoch', 'pvp', 'slots', 'marketBuy', 'marketSell']);
+const AUTO_KEYS = new Set(['afk', 'claims', 'quests', 'dungeon', 'evolve', 'breed', 'gacha', 'premiumEgg', 'gemcraft', 'buyegg', 'autostamina', 'relic', 'relicEnhance', 'relicDismantle', 'companion', 'epoch', 'pvp', 'slots', 'marketBuy', 'marketSell']);
 const AUTO_DEFAULTS = {
   afk: config.ZOLANA_AUTO_AFK,
   claims: config.ZOLANA_AUTO_CLAIMS,
@@ -77,6 +77,7 @@ const AUTO_DEFAULTS = {
   autostamina: config.ZOLANA_AUTO_STAMINA,
   relic: config.ZOLANA_AUTO_RELIC,
   relicEnhance: config.ZOLANA_AUTO_RELIC_ENHANCE,
+  relicDismantle: config.ZOLANA_AUTO_RELIC_DISMANTLE,
   companion: config.ZOLANA_AUTO_COMPANION,
   epoch: config.ZOLANA_AUTO_EPOCH,
   pvp: config.ZOLANA_AUTO_PVP,

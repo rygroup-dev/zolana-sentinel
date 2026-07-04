@@ -447,6 +447,11 @@ export class ZolanaClient {
     return this.post('/api/relic/reroll', { relicId, mode });
   }
 
+  // Break a relic into relic_shard (permanent) — fuel for enhancing the good ones.
+  async relicDismantle(relicId) {
+    return this.post('/api/relic/dismantle', { relicId });
+  }
+
   // --- Info / read-only ---
   async price() {
     return this.get('/api/price');
