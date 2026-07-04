@@ -241,6 +241,7 @@ export class TelegramBot {
       { command: 'wallet', description: '💰 SOL + $ZOLANA balance' },
       { command: 'profit', description: '📈 Net worth & profit tracker' },
       { command: 'market', description: '🏪 Marketplace analysis' },
+      { command: 'mbuy', description: '🛒 Buy items (filter by category, live list)' },
       { command: 'sell', description: '🏷️ Sell items manually (set price & qty)' },
       { command: 'store', description: '🛒 Gem store offers' },
       { command: 'pvp', description: '⚔️ Run a PvP match' },

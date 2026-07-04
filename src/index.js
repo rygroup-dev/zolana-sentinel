@@ -159,7 +159,7 @@ async function handleCommand(command, tg, engine, state) {
       if (!any) lines.push('<i>No market data cached yet (updates every ~20 min).</i>');
       if (checked) lines.push('', `<i>Updated ${checked.toISOString().slice(11, 16)} UTC</i>`);
       const rows = [
-        [{ text: '🏷️ Sell My Items', callback_data: '/sell' }],
+        [{ text: '🛒 Buy Items', callback_data: '/mbuy' }, { text: '🏷️ Sell My Items', callback_data: '/sell' }],
         [{ text: '📄 My Listings', callback_data: '/listings' }, { text: '💎 Buy Gems', callback_data: '/buygems' }],
         [{ text: '⬅️ Back', callback_data: '/start' }],
       ];
@@ -589,6 +589,107 @@ async function handleCommand(command, tg, engine, state) {
         rows.push([{ text: `💎 ${l.qty} gems · ${fmtUsd(l.usd)}`, callback_data: `/buygems ${l.id} CONFIRM` }]);
       }
       rows.push([{ text: '⬅️ Back', callback_data: '/start' }]);
+      return tg.notify(lines.filter(Boolean).join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
+    case '/mbuy': {
+      // Generic marketplace BUY: category filter → live listings (max 20, cheapest
+      // first) → tap to buy. Pay in USD; the server quote auto-converts to $ZOLANA
+      // (95% direct to seller wallet + 5% treasury fee). Buying is NOT level-gated.
+      const fmtN = (n) => Number(n || 0).toLocaleString('en-US');
+      const fmtUsd = (n) => `$${Number(n || 0).toFixed(Number(n) < 0.001 ? 6 : 2)}`;
+      const KINDS = ['gold', 'gem', 'creature', 'egg', 'relic', 'cosmetic', 'material'];
+      const EMO = { gold: '💰', gem: '💎', creature: '🐾', egg: '🥚', relic: '💍', cosmetic: '🎀', material: '⛏️' };
+      const kind = args[0];
+
+      // No/invalid category → show the category picker.
+      if (!kind || !KINDS.includes(kind)) {
+        const rows = [];
+        for (let i = 0; i < KINDS.length; i += 2) {
+          rows.push(KINDS.slice(i, i + 2).map((k) => ({ text: `${EMO[k]} ${k}`, callback_data: `/mbuy ${k}` })));
+        }
+        rows.push([{ text: '⬅️ Back', callback_data: '/market' }]);
+        return tg.notify([
+          '<b>🛒 BUY FROM MARKET</b>',
+          '━━━━━━━━━━━━━━━━━━━━',
+          'Pick a category — you pay in <b>USD</b>, auto-converted to $ZOLANA',
+          'from your wallet (95% → seller, 5% fee). No level needed.',
+        ].join('\n'), { reply_markup: { inline_keyboard: rows } });
+      }
+
+      // Fetch live listings for the chosen kind.
+      const gm = await client.market(kind).catch((e) => ({ error: e.message }));
+      if (gm?.error) return tg.notify(`🛒 Market fetch failed: <code>${esc(gm.error)}</code>`, menuMarkup);
+      const price = Number(gm.zolanaPriceUsd || 0);
+      const listings = (Array.isArray(gm.listings) ? gm.listings : [])
+        .filter((l) => l.status === 'active' && l.item_kind === kind
+          && l.seller !== client.wallet.publicKey && Number(l.price_usd) > 0)
+        .map((l) => {
+          const qty = Math.max(1, Number(l.quantity) || 1);
+          const usd = Number(l.price_usd);
+          return { id: l.id, qty, usd, unit: usd / qty, name: marketName(l) };
+        })
+        .sort((a, b) => a.unit - b.unit)
+        .slice(0, 20);
+
+      // Buy execution: /mbuy <kind> <listingId> GO
+      if (args[2] === 'GO' && args[1]) {
+        const chosen = listings.find((l) => l.id === args[1]);
+        if (!chosen) {
+          return tg.notify('🛒 That listing is gone (sold/expired). Reload to refresh.', {
+            reply_markup: { inline_keyboard: [[{ text: `🔄 Reload ${kind}`, callback_data: `/mbuy ${kind}` }]] },
+          });
+        }
+        const quote = await client.marketQuote(args[1]).catch((e) => ({ error: e.message }));
+        if (quote?.error) return tg.notify(`🛒 Quote failed: <code>${esc(quote.error)}</code>`, menuMarkup);
+        const dec = Number(quote.decimals || 6);
+        const costZ = Number(BigInt(quote.zolanaTotal)) / 10 ** dec;
+        const bal = await client.wallet.tokenBalance().catch(() => null);
+        if (bal && bal.uiAmount - costZ < config.ZOLANA_MARKET_ZOLANA_RESERVE) {
+          return tg.notify(`🛒 Not enough $ZOLANA: need <b>${esc(fmtN(Math.ceil(costZ)))}</b> + reserve <b>${esc(fmtN(config.ZOLANA_MARKET_ZOLANA_RESERVE))}</b>, balance <b>${esc(fmtN(Math.floor(bal.uiAmount)))}</b>.`, menuMarkup);
+        }
+        const qStr = chosen.qty > 1 ? ` ×${fmtN(chosen.qty)}` : '';
+        await tg.notify(`🛒 Buying <b>${esc(chosen.name)}</b>${esc(qStr)} for <b>${esc(fmtN(Math.round(costZ)))}</b> $ZOLANA (${esc(fmtUsd(chosen.usd))})…`);
+        const res = await client.marketBuyWithQuote(quote).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`🛒 Buy failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        state.count('marketBuy'); state.save();
+        logHistory(state, `🛒 Bought ${chosen.name}${qStr} — ${fmtN(Math.round(costZ))} $ZOLANA (${fmtUsd(chosen.usd)})`);
+        logger.info({ listing: chosen.id, kind, name: chosen.name, qty: chosen.qty, spentZolana: Math.round(costZ) }, 'item bought on market');
+        return tg.notify([
+          `${EMO[kind]} <b>PURCHASED!</b>`,
+          '━━━━━━━━━━━━━━━━━━━━',
+          `${esc(chosen.name)}${esc(qStr)} — <b>${esc(fmtN(Math.round(costZ)))}</b> $ZOLANA (${esc(fmtUsd(chosen.usd))})`,
+        ].join('\n'), {
+          reply_markup: { inline_keyboard: [
+            [{ text: `🔄 Buy more ${kind}`, callback_data: `/mbuy ${kind}` }],
+            [{ text: '⬅️ Market', callback_data: '/market' }],
+          ] },
+        });
+      }
+
+      // List view: up to 20 live listings, cheapest first, tap to buy.
+      if (!listings.length) {
+        return tg.notify(`${EMO[kind]} No <b>${kind}</b> listings right now — try another category or later.`, {
+          reply_markup: { inline_keyboard: [[{ text: '⬅️ Categories', callback_data: '/mbuy' }]] },
+        });
+      }
+      const bal = await client.wallet.tokenBalance().catch(() => null);
+      const lines = [
+        `${EMO[kind]} <b>BUY ${kind.toUpperCase()}</b> — cheapest first (max 20)`,
+        '━━━━━━━━━━━━━━━━━━━━',
+        bal ? `🪙 Your $ZOLANA: <b>${esc(fmtN(Math.floor(bal.uiAmount)))}</b>` : '',
+        price ? `💵 $ZOLANA ${esc(fmtUsd(price))} · pay USD → auto-convert` : '',
+        '<i>Tap a row to buy it instantly.</i>',
+        '',
+      ];
+      const rows = [];
+      for (const l of listings) {
+        const costZ = price ? l.usd / price : 0;
+        const q = l.qty > 1 ? ` ×${fmtN(l.qty)}` : '';
+        lines.push(`• <b>${esc(l.name)}</b>${esc(q)} — <b>${esc(fmtUsd(l.usd))}</b> ≈ ${esc(fmtN(Math.round(costZ)))} $Z`);
+        rows.push([{ text: `${EMO[kind]} ${l.name}${q} · ${fmtUsd(l.usd)}`.slice(0, 60), callback_data: `/mbuy ${kind} ${l.id} GO` }]);
+      }
+      rows.push([{ text: '⬅️ Categories', callback_data: '/mbuy' }, { text: '🏪 Market', callback_data: '/market' }]);
       return tg.notify(lines.filter(Boolean).join('\n'), { reply_markup: { inline_keyboard: rows } });
     }
 
