@@ -509,10 +509,7 @@ export class StrategyEngine {
       await this.safeAct('holdClaim', () => this.client.holdClaim());
       this.state.cooldown('holdClaim', CLAIMS_COOLDOWN_MS);
     }
-    if (this.state.ready('epochClaim')) {
-      await this.safeAct('epochClaim', () => this.client.epochClaim());
-      this.state.cooldown('epochClaim', CLAIMS_COOLDOWN_MS);
-    }
+    await this.epochGemMint(player);
     // Dex milestones are client-computed from distinct species owned (not in the
     // player payload) → claim any whose species threshold is met and unclaimed.
     const species = new Set(creatures(player).map((c) => c.creature_id).filter(Boolean)).size;
@@ -907,6 +904,53 @@ export class StrategyEngine {
     if (res) {
       logger.info({ recipe }, 'epoch donated for $ZOLANA rebate');
       this.state.data.lastEpochDonate = { at: new Date().toISOString(), recipe };
+    }
+  }
+
+  // Community chest "make Gems": ONLY when the chest is OPEN, each /api/epoch/claim
+  // converts one recipe (100k gold + 40 glimmer + 20 mana + 8 astral from the bag) into
+  // +1 gem. The old code claimed once per 30 min → ~2 gems per short open window. Instead
+  // mint in bulk while open (up to a per-cycle cap), staying above a big gold reserve + a
+  // gem target, then re-check quickly so we ride the whole open window. Closed/resting/
+  // funding → back off to the normal cadence (no 409 spam).
+  async epochGemMint(player) {
+    if (!this.toggle('claims', config.ZOLANA_AUTO_CLAIMS)) return;
+    if (!this.toggle('epoch', config.ZOLANA_AUTO_EPOCH)) return;
+    if (!this.state.ready('epochClaim')) return;
+
+    const data = await this.safeAct('epoch:read', () => this.client.epoch());
+    if (data?.epoch?.status !== 'open') {
+      this.state.cooldown('epochClaim', CLAIMS_COOLDOWN_MS); // resting/funding → check later
+      return;
+    }
+
+    const recipe = data.recipe || { gold: 100000, glimmer_dust: 40, mana_shard: 20, astral_core: 8 };
+    const needGold = Number(recipe.gold || 0);
+    let gold = Number(actor(player).gold || 0);
+    let gems = Number(actor(player).gems || 0);
+    const have = Object.fromEntries(list(player?.materials).map((m) => [m.material_id, Number(m.quantity || 0)]));
+
+    let minted = 0;
+    for (let i = 0; i < config.ZOLANA_EPOCH_MINT_MAX_PER_CYCLE; i++) {
+      if (gems >= config.ZOLANA_EPOCH_MINT_GEM_TARGET) break;            // enough gems banked
+      if (gold - needGold < config.ZOLANA_EPOCH_MINT_GOLD_FLOOR) break;  // keep gold reserve
+      const shortMat = Object.entries(recipe).some(([k, q]) => k !== 'gold' && (have[k] || 0) < Number(q));
+      if (shortMat) break;
+      const res = await this.safeAct('epochClaim', () => this.client.epochClaim());
+      if (!res) break; // 409 / chest just closed → stop
+      gold -= needGold; gems += 1; minted += 1;
+      for (const [k, q] of Object.entries(recipe)) if (k !== 'gold') have[k] -= Number(q);
+    }
+    // Hit the per-cycle cap while still able → check back in 1 min to keep minting through
+    // the window; otherwise (target/gold/mats exhausted) fall to the normal cadence.
+    const capped = minted >= config.ZOLANA_EPOCH_MINT_MAX_PER_CYCLE
+      && gems < config.ZOLANA_EPOCH_MINT_GEM_TARGET
+      && gold - needGold >= config.ZOLANA_EPOCH_MINT_GOLD_FLOOR;
+    this.state.cooldown('epochClaim', capped ? 60 * 1000 : CLAIMS_COOLDOWN_MS);
+    if (minted > 0) {
+      logger.info({ minted, gems }, 'epoch chest: minted gems from bag');
+      this.logHistory(`💎 Chest OPEN: made ${minted} gem${minted > 1 ? 's' : ''} (−${(minted * needGold).toLocaleString('en-US')} gold) → ${gems} gems`);
+      this.queueNotify({ type: 'text', text: `💎 Community chest is OPEN — made <b>${minted}</b> gem${minted > 1 ? 's' : ''} from your bag (now <b>${gems}</b> gems).` });
     }
   }
 

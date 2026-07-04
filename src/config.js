@@ -100,6 +100,13 @@ const schema = z.object({
   // rebate (not level-gated). Only fires when donation is actually open.
   ZOLANA_AUTO_EPOCH: z.coerce.boolean().default(true),
   ZOLANA_EPOCH_DONATE_GOLD_FLOOR: z.coerce.number().int().min(0).default(120000),
+  // Community chest "make Gems": while the chest is OPEN, each claim converts one recipe
+  // (100k gold + 40 glimmer + 20 mana + 8 astral from the bag) into +1 gem. Surplus gold
+  // piles up (auto-sell gold is off), so mint gems — the rarity currency for gacha/premium
+  // eggs — up to this many per cycle, but only above the gold floor and below the gem target.
+  ZOLANA_EPOCH_MINT_MAX_PER_CYCLE: z.coerce.number().int().min(0).max(20).default(4),
+  ZOLANA_EPOCH_MINT_GOLD_FLOOR: z.coerce.number().int().min(0).default(500000),
+  ZOLANA_EPOCH_MINT_GEM_TARGET: z.coerce.number().int().min(0).default(80),
   // Spend gems on the best creature source: premium egg (50 gems, Rare/Epic/Legendary)
   // when unlocked, else gacha. Craft gems free from dungeon gem_catalyst.
   ZOLANA_AUTO_PREMIUM_EGG: z.coerce.boolean().default(true),
