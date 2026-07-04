@@ -179,6 +179,18 @@ async function handleCommand(command, tg, engine, state) {
     case '/stats':
       return tg.notify(tg.formatStats(), menuMarkup);
 
+    case '/history': {
+      const h = Array.isArray(state.data.history) ? state.data.history : [];
+      if (!h.length) return tg.notify('📜 <b>No history yet.</b>\nEvents (sales, hatches, new eggs, sacrifices…) will appear here.', menuMarkup);
+      const lines = ['<b>📜 ACTIVITY HISTORY</b>', '━━━━━━━━━━━━━━━━━━━━'];
+      for (const e of h.slice(-15).reverse()) {
+        const hh = new Date(e.t).toISOString().slice(11, 16);
+        lines.push(`<code>${hh}</code>  ${esc(e.text)}`);
+      }
+      lines.push('', '<i>Times in UTC · newest first</i>');
+      return tg.notify(lines.join('\n'), menuMarkup);
+    }
+
     case '/once':
       await tg.notify('▶️ Running one cycle…');
       await engine.cycle();
@@ -666,6 +678,7 @@ async function handleCommand(command, tg, engine, state) {
         } else {
           const cr = res?.creature || res?.card || res || {};
           results.push(`🐣 <b>${esc(cr.rarity || '')} ${esc(cr.creature_id || cr.name || e.egg_type)}</b> hatched!`);
+          logHistory(state, `🐣 Hatched ${cr.rarity || ''} ${cr.creature_id || e.egg_type}`.trim());
         }
       }
       return tg.notify(['<b>🐣 HATCH RESULT</b>', '━━━━━━━━━━━━━━━━━━━━', ...results, '', 'See it in /creatures.'].join('\n'), menuMarkup);
@@ -714,48 +727,65 @@ async function handleCommand(command, tg, engine, state) {
       return tg.notify(store ? '🗄️ <b>Vaulted</b> — roster slot freed. Open /vault or /hatch.' : '↩️ <b>Pulled back</b> from vault into your roster.', { reply_markup: { inline_keyboard: [[{ text: '🗄️ Vault', callback_data: '/vault' }, { text: '🐣 Hatch', callback_data: '/hatch' }]] } });
     }
 
-    // ⚔️ Sacrifice — feed spare Common creatures into your strongest (XP + frees roster).
+    // ⚔️ Sacrifice — feed spare Common/Uncommon creatures into a chosen target (XP + frees roster).
     case '/sacrifice': {
       let player;
       try { player = await client.loadPlayer(); }
       catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
       const cr = player.creatures || [];
-      const target = [...cr].filter((c) => !c.stored).sort((a, b) => creatureValue(b) - creatureValue(a))[0];
+      const all = cr.filter((c) => !c.stored);
+      // Target = the one passed by the picker, else the strongest creature.
+      const target = (args[0] && all.find((c) => c.id === args[0])) || [...all].sort((a, b) => creatureValue(b) - creatureValue(a))[0];
       if (!target) return tg.notify('⚔️ No creatures to sacrifice into.', menuMarkup);
-      const fodder = cr.filter((c) => c.rarity === 'Common' && !isPlacedC(c) && !c.run_id && !c.listed && !c.stored && c.id !== target.id);
-      if (!fodder.length) return tg.notify('⚔️ No spare Common creatures to sacrifice (placed/raiding ones are protected).', menuMarkup);
-      const n = Math.min(fodder.length, 10);
+      const spare = (rar) => cr.filter((c) => c.rarity === rar && !isPlacedC(c) && !c.run_id && !c.listed && !c.stored && c.id !== target.id);
+      const commonN = spare('Common').length;
+      const uncommonN = spare('Uncommon').length;
+      if (!commonN && !uncommonN) return tg.notify('⚔️ No spare Common/Uncommon to sacrifice (placed/raiding ones are protected).', menuMarkup);
       const lines = [
         '<b>⚔️ SACRIFICE</b>', '━━━━━━━━━━━━━━━━━━━━',
-        `🎯 Target (gets XP): <b>${RARITY_EMOJI2[target.rarity] || ''}${target.creature_id}</b> ${target.rarity}/${target.stage} L${target.level}`,
-        `🔥 Spare Commons available: <b>${fodder.length}</b>`,
-        '', `This will feed <b>${n}</b> Common creatures into your target — they are consumed, target gains XP, and <b>${n}</b> roster slots free up.`,
+        `🎯 Target (gets XP): <b>${RARITY_EMOJI2[target.rarity] || ''}${esc(target.creature_id)}</b> ${target.rarity}/${target.stage} L${target.level}`,
+        '', 'Spare fodder <i>(placed/raiding ones are protected)</i>:',
+        `   ⚪ Common: <b>${commonN}</b>   🟢 Uncommon: <b>${uncommonN}</b>`,
+        '', '<i>Fodder is consumed (max 10/tap); target gains XP + roster frees up. Pick which to feed:</i>',
       ];
-      const rows = [
-        [{ text: `⚔️ Sacrifice ${n} Common → ${target.creature_id}`.slice(0, 45), callback_data: `/sac ${target.id} ${n}` }],
-        [{ text: '✖️ Cancel', callback_data: '/start' }],
-      ];
+      const rows = [];
+      if (commonN) rows.push([{ text: `⚔️ ${Math.min(commonN, 10)} Common → ${target.creature_id}`.slice(0, 45), callback_data: `/sac ${target.id} C` }]);
+      if (uncommonN) rows.push([{ text: `⚔️ ${Math.min(uncommonN, 10)} Uncommon → ${target.creature_id}`.slice(0, 45), callback_data: `/sac ${target.id} U` }]);
+      rows.push([{ text: '🎯 Change target', callback_data: '/sactgt' }, { text: '✖️ Cancel', callback_data: '/start' }]);
       return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
+    // Pick which creature receives the sacrifice XP.
+    case '/sactgt': {
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
+      const cr = (player.creatures || []).filter((c) => !c.stored).sort((a, b) => creatureValue(b) - creatureValue(a)).slice(0, 8);
+      if (!cr.length) return tg.notify('⚔️ No creatures found.', menuMarkup);
+      const rows = cr.map((c) => [{ text: `🎯 ${RARITY_EMOJI2[c.rarity] || ''} ${c.creature_id} ${c.rarity} L${c.level}`.slice(0, 45), callback_data: `/sacrifice ${c.id}` }]);
+      rows.push([{ text: '⬅️ Back', callback_data: '/sacrifice' }]);
+      return tg.notify(['<b>🎯 PICK SACRIFICE TARGET</b>', '━━━━━━━━━━━━━━━━━━━━', 'Tap the creature that should receive the XP:'].join('\n'), { reply_markup: { inline_keyboard: rows } });
     }
 
     case '/sac': {
       const targetId = args[0];
-      const count = Math.min(Number(args[1]) || 0, 15);
-      if (!targetId || !count) return tg.notify('❌ Bad selection. Open /sacrifice.', menuMarkup);
+      const rarity = (args[1] || 'C').toUpperCase() === 'U' ? 'Uncommon' : 'Common';
+      if (!targetId) return tg.notify('❌ Bad selection. Open /sacrifice.', menuMarkup);
       let player;
       try { player = await client.loadPlayer(); }
       catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
       const target = (player.creatures || []).find((c) => c.id === targetId);
       if (!target) return tg.notify('❌ Target creature not found. Open /sacrifice.', menuMarkup);
-      const fodder = (player.creatures || []).filter((c) => c.rarity === 'Common' && !isPlacedC(c) && !c.run_id && !c.listed && !c.stored && c.id !== targetId).slice(0, count);
-      if (!fodder.length) return tg.notify('⚔️ No spare Common creatures left.', menuMarkup);
+      const fodder = (player.creatures || []).filter((c) => c.rarity === rarity && !isPlacedC(c) && !c.run_id && !c.listed && !c.stored && c.id !== targetId).slice(0, 10);
+      if (!fodder.length) return tg.notify(`⚔️ No spare ${rarity} creatures left.`, menuMarkup);
       const res = await client.sacrifice(targetId, fodder.map((c) => c.id)).catch((e) => ({ error: e.message }));
       if (res?.error) return tg.notify(`❌ Sacrifice failed: <code>${esc(res.error)}</code>`, menuMarkup);
+      logHistory(state, `⚔️ Sacrificed ${fodder.length} ${rarity} → ${target.creature_id}`);
       return tg.notify([
         '<b>⚔️ SACRIFICED!</b>',
-        `🔥 ${fodder.length} Common → 🎯 <b>${esc(target.creature_id)}</b>`,
+        `🔥 ${fodder.length} ${rarity} → 🎯 <b>${esc(target.creature_id)}</b>`,
         `Roster freed by ${fodder.length}. Target gained XP.`,
-      ].join('\n'), { reply_markup: { inline_keyboard: [[{ text: '⚔️ Again', callback_data: '/sacrifice' }, { text: '🐣 Hatch', callback_data: '/hatch' }]] } });
+      ].join('\n'), { reply_markup: { inline_keyboard: [[{ text: '⚔️ Again', callback_data: `/sacrifice ${target.id}` }, { text: '🐣 Hatch', callback_data: '/hatch' }]] } });
     }
 
     // ⬆️ Buy a storage capacity upgrade (server deducts the cost, usually gold).
@@ -1059,6 +1089,14 @@ function sellUnitFloor(summary, kind, matFloor, resource) {
   if (kind === 'gold') { const f = Number(summary?.gold?.floorUnitUsd); return f > 0 ? f : 1 / 320000; }
   const f = Number(summary?.[kind]?.floorUnitUsd);
   return f > 0 ? f : (SELL_FALLBACK[kind] || 0.05);
+}
+
+// Append a one-line event to the rolling activity history (shown by /history).
+function logHistory(state, text) {
+  const h = Array.isArray(state.data.history) ? state.data.history : [];
+  h.push({ t: Date.now(), text });
+  state.data.history = h.slice(-40);
+  state.save();
 }
 
 // Human name for a market listing row (from its embedded item, per kind).

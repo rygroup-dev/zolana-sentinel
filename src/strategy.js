@@ -333,8 +333,38 @@ export class StrategyEngine {
     await this.marketIntel();
     await this.trackProfit(player);
     this.watchOps(player);
+    this.detectNewEggs(player);
     this.state.data.lastPlayer = this.snapshotPlayer(player);
     this.state.save();
+  }
+
+  // Append a one-line event to the rolling activity history (shown by /history).
+  logHistory(text) {
+    const h = list(this.state.data.history);
+    h.push({ t: Date.now(), text });
+    this.state.data.history = h.slice(-40);
+  }
+
+  // Notify + log when a NEW egg shows up in the bag (from gacha, breeding, drops, or
+  // rewards) — highlights mystery/premium/golden so a surprise Legendary egg is obvious.
+  detectNewEggs(player) {
+    const eggs = list(player?.eggs).filter((e) => e && !e.hatched && e.status !== 'hatched' && !e.creature_id);
+    const ids = eggs.map((e) => e.id).filter(Boolean);
+    const known = this.state.data.knownEggs;
+    if (Array.isArray(known)) {
+      const knownSet = new Set(known);
+      const LABEL = { mystery: '🌟 Mystery', premium: '💠 Premium', golden: '🥇 Golden', breeding: '🧬 Breeding', forest: '🌲 Forest', basic: '🥚 Basic' };
+      const POT = { mystery: 'Legendary', premium: 'Rare–Legendary', golden: 'Epic–Legendary', forest: 'up to Rare', breeding: 'inherited from parents', basic: 'Common' };
+      for (const e of eggs.filter((x) => x.id && !knownSet.has(x.id))) {
+        const type = e.egg_type || 'egg';
+        const label = LABEL[type] || `🥚 ${type}`;
+        const pot = POT[type] || '?';
+        const special = /mystery|premium|golden/i.test(type);
+        this.queueNotify({ text: `${special ? '✨ ' : ''}<b>New ${label} egg obtained!</b>\nCan hatch → <b>${pot}</b>. Hatch it with /hatch.` });
+        this.logHistory(`${label} egg obtained (${pot})`);
+      }
+    }
+    this.state.data.knownEggs = ids;
   }
 
   // Future-proofing: the game is actively updated (new `titles`, ZUMMER event,
@@ -349,10 +379,10 @@ export class StrategyEngine {
     const newFlags = flags.filter((f) => !seen.flags.includes(f));
     if ((newEvents.length || newFlags.length) && this.state.data.opsSeen) {
       this.queueNotify({
-        text: `🆕 <b>Update game terdeteksi!</b>\n`
-          + `Event baru: <b>${newEvents.join(', ') || '-'}</b>\n`
-          + `Flag aktif: <b>${newFlags.join(', ') || '-'}</b>\n`
-          + `Cek in-game — mungkin ada reward/mekanik baru.`,
+        text: `🆕 <b>Game update detected!</b>\n`
+          + `New event: <b>${newEvents.join(', ') || '-'}</b>\n`
+          + `Active flag: <b>${newFlags.join(', ') || '-'}</b>\n`
+          + `Check in-game — there may be a new reward/mechanic.`,
       });
       logger.info({ newEvents, newFlags }, 'new game event/flag detected');
     }
@@ -435,7 +465,7 @@ export class StrategyEngine {
       if (unplaced > 0 && placedCount < slots) {
         await this.safeAct('placeAuto', () => this.client.placeAuto(slots - placedCount));
       }
-      await this.optimizePlacement();
+      await this.optimizePlacement(player);
     }
 
     // --- Claim every completed quest (client-computed; +150 acct XP each) ---
@@ -520,9 +550,8 @@ export class StrategyEngine {
   // Ensure the highest gold-per-hour creatures occupy the farm slots. Rarity/variant
   // dominate output (a Legendary = 500× a Common), so evict the weakest placed
   // creatures and place the strongest unplaced ones into the freed plots.
-  async optimizePlacement() {
-    if (!this.state.ready('placement')) return;
-    const player = await this.client.loadPlayer().catch(() => null);
+  async optimizePlacement(preloaded = null) {
+    const player = preloaded || await this.client.loadPlayer().catch(() => null);
     if (!player) return;
     const slots = Number(actor(player).place_slots || this.targetPlaced());
     const pool = creatures(player).filter((c) => c.id && !c.stored && !c.listed && !c.run_id);
@@ -538,6 +567,14 @@ export class StrategyEngine {
     const evictable = pool
       .filter((c) => isPlaced(c) && !wantIds.has(c.id))
       .sort((a, b) => coinsPerHour(a) - coinsPerHour(b));
+
+    // A BIG upgrade — a strong creature sitting idle (e.g. a just-hatched Legendary/Rare)
+    // — bypasses the 15-min anti-churn cooldown so it starts farming IMMEDIATELY. Marginal
+    // swaps (Uncommon/Common shuffles) still wait for the cooldown to avoid place/unplace spam.
+    const bestIdle = coinsPerHour(wantUnplaced[0]);
+    const weakestPlaced = evictable.length ? coinsPerHour(evictable[0]) : 0;
+    const bigUpgrade = bestIdle >= 200 || bestIdle >= weakestPlaced * 2;
+    if (!this.state.ready('placement') && !bigUpgrade) return;
     const spots = [];
     for (const weak of evictable) {
       if (spots.length >= wantUnplaced.length) break;
@@ -845,6 +882,7 @@ export class StrategyEngine {
       refilled = staminaNow(res) || Number(this.state.data.raid?.staminaMax) || 180;
       logger.info({ buysToday: rec.count, stamina: refilled, cost: config.ZOLANA_STAMINA_ZENKO_COST }, 'auto-bought stamina');
       this.queueNotify({ text: `⚡ <b>Auto-bought full stamina</b> for ${config.ZOLANA_STAMINA_ZENKO_COST} $ZOLANA — raiding now. (${rec.count}/${config.ZOLANA_AUTO_STAMINA_MAX_PER_DAY} today)` });
+      this.logHistory(`⚡ Auto-bought stamina (${config.ZOLANA_STAMINA_ZENKO_COST} $ZOLANA)`);
     }
     this.state.data.autoStamina = rec;
     this.state.save();
@@ -1181,14 +1219,14 @@ export class StrategyEngine {
       present.add(l.id);
       const isSold = l.sold_at || l.buyer || (l.status && l.status !== 'active');
       if (isSold) {
-        if (prev[l.id]) notes.push(this.saleNote(l));
+        if (prev[l.id]) { notes.push(this.saleNote(l)); this.logHistory(`💰 Sold ${this.marketItemName(l)} $${l.price_usd ?? '?'}`); }
         continue;
       }
       active[l.id] = { kind: l.item_kind, price: l.price_usd, resource: l.resource, qty: l.quantity };
     }
     for (const id of Object.keys(prev)) {
       if (present.has(id)) continue; // already handled (sold in-place) above
-      if (soldById[id]) notes.push(this.saleNote(soldById[id]));
+      if (soldById[id]) { notes.push(this.saleNote(soldById[id])); this.logHistory(`💰 Sold ${this.marketItemName(soldById[id])} $${soldById[id].price_usd ?? '?'}`); }
     }
     this.state.data.myListings = active;
     return notes;
@@ -1217,6 +1255,7 @@ export class StrategyEngine {
       const name = payload.resource || payload.itemKind || 'item';
       const qty = payload.quantity ? `×${Math.round(Number(payload.quantity)).toLocaleString('en-US')} ` : '';
       this.queueNotify({ text: `🏷️ <b>Listed on market</b>\n${qty}${name} — <b>$${payload.priceUsd}</b>` });
+      this.logHistory(`🏷️ Listed ${qty}${name} $${payload.priceUsd}`);
     }
     return res;
   }

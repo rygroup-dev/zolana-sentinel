@@ -162,6 +162,7 @@ export class TelegramBot {
           { text: '🎒 Inventory', callback_data: '/inventory' },
           { text: '🐉 Creatures', callback_data: '/creature' },
           { text: '📈 Profit', callback_data: '/profit' },
+          { text: '📜 History', callback_data: '/history' },
         ],
         [
           { text: '▶️ Run Cycle', callback_data: '/once' },
@@ -272,6 +273,7 @@ export class TelegramBot {
       { command: 'cancel', description: '❌ Cancel a listing <id>' },
       { command: 'leaderboard', description: '🏆 Leaderboard' },
       { command: 'stats', description: '📋 Bot action stats' },
+      { command: 'history', description: '📜 Recent activity (sales/hatches/eggs)' },
       { command: 'auto', description: '⚙️ Autopilot toggle panel' },
       { command: 'once', description: '▶️ Run one cycle now' },
       { command: 'pause', description: '⏸ Pause autopilot' },
