@@ -440,8 +440,18 @@ export class ZolanaClient {
     return this.post('/api/relic/craft', { relicClass, slot });
   }
 
+  // Forge a COMBAT relic of a chosen rarity + stat (Rare/Epic/Legendary…). Server
+  // validates cost + success chance; on fail it refunds 50% of the materials.
+  async craftCombatRelic(rarity, stat) {
+    return this.post('/api/relic/craft-combat', { rarity, stat });
+  }
+
   async relicEquip(relicId, target, slot) {
     return this.post('/api/relic/equip', { relicId, target, slot });
+  }
+
+  async relicUnequip(relicId) {
+    return this.post('/api/relic/unequip', { relicId });
   }
 
   async relicEnhance(relicId) {

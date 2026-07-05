@@ -49,6 +49,51 @@ function coinsPerHour(creature) {
   return base * variant * (1 + 0.015 * (level - 1));
 }
 
+const RARITY_RANK = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+const RELIC_SLOTS = ['combat_a', 'combat_b', 'combat_c'];
+// Rank a relic for equipping/upgrading: rarity dominates, then total affix magnitude,
+// then enhance level. Higher = better.
+function relicScore(r) {
+  const rank = RARITY_RANK[r?.rarity] || 0;
+  const affix = (r?.affixes || []).reduce((s, a) => s + Math.abs(Number(a?.value) || 0), 0);
+  return rank * 1000 + affix * 100 + (Number(r?.enhance_level) || 0);
+}
+const relicId = (r) => r?.id || r?.relic_id;
+
+// Pure planner: fill every combat slot of the target pets (rarity ≥ minRank, strongest
+// first) with the best available relics. Returns {equips:[{relicId,target,slot}],
+// unequips:[relicId]}. Empty slots get the best free relic; an occupied slot is swap-
+// upgraded when a stronger free relic exists. Never touches non-target pets or
+// listed/stored relics. Recomputed live each cycle → auto-adapts to new/upgraded relics.
+export function planRelicEquips(pets, relics, minRank = 5, slots = RELIC_SLOTS) {
+  const targets = pets
+    .filter((c) => c?.id && !c.stored && !c.listed && (RARITY_RANK[c.rarity] || 0) >= minRank)
+    .sort((a, b) => battlePower(b) - battlePower(a));
+  const free = relics
+    .filter((r) => !r.equipped_on && !r.listed && !r.stored)
+    .sort((a, b) => relicScore(b) - relicScore(a));
+  const equips = [];
+  const unequips = [];
+  let fi = 0;
+  for (const pet of targets) {
+    const here = relics.filter((r) => r.equipped_on === pet.id);
+    const bySlot = new Map(here.map((r) => [r.equip_slot, r]));
+    for (const slot of slots) {
+      const cur = bySlot.get(slot);
+      if (!cur) {
+        if (fi < free.length) equips.push({ relicId: relicId(free[fi]), target: pet.id, slot });
+        fi += fi < free.length ? 1 : 0;
+      } else if (fi < free.length && relicScore(free[fi]) > relicScore(cur)) {
+        // A stronger free relic exists → swap it in (unequip the weak one first).
+        unequips.push(relicId(cur));
+        equips.push({ relicId: relicId(free[fi]), target: pet.id, slot });
+        fi += 1;
+      }
+    }
+  }
+  return { equips, unequips };
+}
+
 // How much of each material to KEEP for the bot's own craft/build/epoch use before
 // selling the surplus: gem_catalyst→gem craft (5/craft), relic_shard→relic enhance
 // (~8/level), mana_shard/glimmer_dust/astral_core→epoch donate recipe (20/40/8 each).
@@ -783,30 +828,56 @@ export class StrategyEngine {
     if (!this.state.ready('relic')) return;
 
     const owned = list(player?.relics);
-    // Always keep at least one relic equipped so d_equip stays claimable.
+    // Equip/upgrade: fill every combat slot of the target pets (default Legendary-only)
+    // with the strongest relics we own.
     if (owned.length > 0) await this.ensureRelicEquipped(player, owned);
 
     // Recycle junk (low-rarity, unequipped) relics into relic_shard = enhance fuel.
     await this.dismantleJunkRelics(player);
 
-    if (owned.length >= config.ZOLANA_RELIC_TARGET) {
-      this.state.cooldown('relic', 6 * 60 * 60 * 1000);
-      return;
-    }
-    const gold = Number(actor(player).gold || 0);
-    if (gold < config.ZOLANA_RELIC_CRAFT_GOLD_FLOOR) {
-      this.state.cooldown('relic', 30 * 60 * 1000);
-      return;
-    }
+    // Forge better combat relics until we own enough Epic+ to fill every target slot.
+    await this.craftCombatRelics(player);
+    this.state.cooldown('relic', 30 * 60 * 1000);
+  }
 
-    // Build a set across the three relic slots.
-    const slots = ['amulet', 'ring', 'idol'];
-    const slot = slots[owned.length % slots.length];
-    const crafted = await this.safeAct(`relicCraft:${slot}`, () => this.client.relicCraft(slot, 'common'));
-    this.state.cooldown('relic', crafted ? 30 * 60 * 1000 : 60 * 60 * 1000);
-    if (crafted) {
-      logger.info({ slot }, 'relic crafted');
-      this.logHistory(`💍 Crafted relic (${slot})`);
+  // Forge COMBAT relics (rarity + stat chosen) until the target pets can be fully
+  // outfitted with Epic+ relics. Crafts Epic by default (no gem_catalyst); upgrades to
+  // Legendary only when a gem_catalyst is already in inventory (never auto-buys). Gated
+  // by a gold floor + a per-cycle cap so it never drains the evolve/quest reserve.
+  async craftCombatRelics(player) {
+    const perCycle = config.ZOLANA_RELIC_CRAFT_PER_CYCLE;
+    if (perCycle <= 0) return;
+    const minRank = RARITY_RANK[config.ZOLANA_RELIC_EQUIP_MIN_RARITY] || 5;
+    const targetPets = creatures(player)
+      .filter((c) => c.id && !c.stored && !c.listed && (RARITY_RANK[c.rarity] || 0) >= minRank).length;
+    if (!targetPets) return; // no Legendary pets → nothing to outfit
+
+    const craftRank = RARITY_RANK[config.ZOLANA_RELIC_CRAFT_RARITY] || 4;
+    const relics = list(player?.relics);
+    const haveGood = relics.filter((r) => (RARITY_RANK[r.rarity] || 0) >= craftRank
+      && !r.listed && !r.stored).length;
+    const needSlots = targetPets * RELIC_SLOTS.length; // 3 slots per target pet
+    if (haveGood >= needSlots) return; // already enough top relics to fill every slot
+
+    const gold = Number(actor(player).gold || 0);
+    if (gold < config.ZOLANA_RELIC_CRAFT_GOLD_FLOOR) return;
+
+    // Upgrade the craft to Legendary when a gem_catalyst is on hand (manual-only supply).
+    let rarity = config.ZOLANA_RELIC_CRAFT_RARITY;
+    const catalyst = Number(list(player?.materials).find((m) => m.material_id === 'gem_catalyst')?.quantity || 0);
+    if (config.ZOLANA_RELIC_LEGENDARY_WHEN_CATALYST && catalyst >= 1 && gold >= 100000) rarity = 'Legendary';
+
+    const stats = config.ZOLANA_RELIC_CRAFT_STATS.split(',').map((s) => s.trim()).filter(Boolean);
+    let made = 0;
+    for (let i = 0; i < Math.min(perCycle, needSlots - haveGood); i += 1) {
+      const stat = stats[(haveGood + i) % stats.length] || 'attack_pct';
+      const res = await this.safeAct(`craftCombat:${rarity}:${stat}`, () => this.client.craftCombatRelic(rarity, stat));
+      if (!res) break; // action budget hit or server reject (e.g. out of materials)
+      made += 1;
+      logger.info({ rarity, stat }, 'combat relic forged');
+    }
+    if (made) {
+      this.logHistory(`💍 Forged ${made} ${rarity} combat relic${made > 1 ? 's' : ''}`);
       const fresh = playerFrom(await this.client.loadPlayer().catch(() => null));
       if (fresh) await this.ensureRelicEquipped(fresh, list(fresh?.relics));
     }
@@ -835,41 +906,29 @@ export class StrategyEngine {
   }
 
   async ensureRelicEquipped(player, relics) {
-    // Relics buff the creature they're equipped on (equipped_on). Equip EVERY
-    // unequipped relic onto a party creature — rarest first — so party power grows.
-    const party = creatures(player)
-      .filter((c) => c.id && !c.stored && !c.listed)
-      .sort((a, b) => battlePower(b) - battlePower(a)); // strongest by battle power
-    const rank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
-    const combat = (r) => (r.class === 'combat' ? 1 : 0);
-    // Equip the best relics first: COMBAT-class (raw party power, enhanceable ×3) before
-    // utility, then by rarity. Skip anything listed/stored so we never equip a for-sale relic.
-    const unequipped = relics
-      .filter((r) => !r.equipped_on && !r.listed && !r.stored)
-      .sort((a, b) => combat(b) - combat(a) || (rank[b.rarity] || 0) - (rank[a.rarity] || 0));
+    // Give each TARGET pet (default: Legendary-rarity only, strongest first) a full set
+    // of the best relics across its 3 combat slots. planRelicEquips fills empty slots and
+    // swap-upgrades weaker ones — so relics concentrate on the pets that actually matter
+    // instead of being piled on a single creature.
+    const minRank = RARITY_RANK[config.ZOLANA_RELIC_EQUIP_MIN_RARITY] || 5;
+    const { equips, unequips } = planRelicEquips(creatures(player), relics, minRank);
 
-    for (const relic of unequipped) {
-      const relicId = relic.id || relic.relic_id;
-      if (!relicId) continue;
-      const slot = relic.slot || relic.equip_slot || 'power_pct';
-      let equipped = false;
-      // A relic slot can only hold one relic per creature → fall back across the party.
-      for (const target of party.slice(0, 6)) {
-        const res = await this.safeAct(`relicEquip:${relicId}`, () => this.client.relicEquip(relicId, target.id, slot));
-        if (res) { logger.info({ relicId, target: target.id, slot }, 'relic equipped'); equipped = true; break; }
-      }
-      if (!equipped) break; // action budget hit or nowhere to place — try next cycle
+    // Unequip weak relics first so their slot is free for the stronger swap-in.
+    for (const id of unequips) {
+      const res = await this.safeAct(`relicUnequip:${id}`, () => this.client.relicUnequip(id));
+      if (!res) break; // action budget hit — resume next cycle
+    }
+    for (const { relicId: rid, target, slot } of equips) {
+      const res = await this.safeAct(`relicEquip:${rid}`, () => this.client.relicEquip(rid, target, slot));
+      if (!res) break; // action budget hit — resume next cycle
+      logger.info({ relicId: rid, target, slot }, 'relic equipped');
     }
 
-    // Enhance the BEST equipped relic with surplus relic_shard → most party power per
-    // shard. Post-rework, COMBAT-class relics stack power above the cap (up to ×3), so
-    // prioritise those; then rarest, then least-enhanced.
-    const erank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
-    const isCombat = (r) => (r.class === 'combat' ? 1 : 0);
+    // Enhance the BEST equipped relic on a target pet with surplus relic_shard → most
+    // party power per shard: rarest first, then least-enhanced.
     const toEnhance = relics
       .filter((r) => r.equipped_on)
-      .sort((a, b) => isCombat(b) - isCombat(a)
-        || (erank[b.rarity] || 0) - (erank[a.rarity] || 0)
+      .sort((a, b) => (RARITY_RANK[b.rarity] || 0) - (RARITY_RANK[a.rarity] || 0)
         || (Number(a.enhance_level) || 0) - (Number(b.enhance_level) || 0))[0];
     if (toEnhance) await this.enhanceRelic(player, toEnhance);
   }

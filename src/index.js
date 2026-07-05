@@ -489,6 +489,80 @@ async function handleCommand(command, tg, engine, state) {
       return tg.notify(`💍 Relic processed (craft+equip). Owned: <b>${owned}</b>. Unlocks d_equip (+150 XP/day) & w_relics quests.`, menuMarkup);
     }
 
+    case '/relicforge': {
+      const player = await client.loadPlayer().catch(() => null);
+      if (!player) return tg.notify('❌ Could not load (game offline?). Try again.', menuMarkup);
+      const rarityArg = args[0];
+      // POST /api/relic/craft-combat {rarity, stat}. Costs + success odds (RE from live).
+      const FORGE = {
+        Rare: { odds: 60, cost: '22 glimmer · 18 mana · 2 astral · 5k gold' },
+        Epic: { odds: 35, cost: '30 glimmer · 28 mana · 5 astral · 25k gold' },
+        Legendary: { odds: 18, cost: '40 glimmer · 40 mana · 8 astral · 1 catalyst · 100k gold' },
+      };
+      if (rarityArg) {
+        const rarity = rarityArg[0].toUpperCase() + rarityArg.slice(1).toLowerCase();
+        const stat = args[1] || config.ZOLANA_RELIC_CRAFT_STATS.split(',')[0];
+        const res = await client.craftCombatRelic(rarity, stat).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`🔨 Forge <b>${esc(rarity)}</b> failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        const failed = res?.success === false || res?.crafted === false || /fail|refund/i.test(JSON.stringify(res));
+        return tg.notify(failed
+          ? `🔨 Forge <b>${esc(rarity)}</b> ${esc(stat)} — <b>❌ failed</b> (rolled ${FORGE[rarity]?.odds ?? '?'}%), 50% materials refunded. Try again.`
+          : `🔨 <b>Forged ${esc(rarity)} ${esc(stat)} relic!</b> ✅ It'll be auto-equipped to a Legendary pet's slot next cycle.`, menuMarkup);
+      }
+      const have = Object.fromEntries((player.materials || []).map((m) => [m.material_id, Number(m.quantity || 0)]));
+      const gold = Number((player.player || {}).gold || 0);
+      const rank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+      const goodN = (player.relics || []).filter((r) => (rank[r.rarity] || 0) >= 4).length;
+      const legPets = (player.creatures || []).filter((c) => (rank[c.rarity] || 0) >= 5).length;
+      const lines = [
+        '🔨 <b>Relic Forge</b> — craft a combat relic of your chosen rarity + stat.',
+        '',
+        `💠 Have: ${have.glimmer_dust || 0} glimmer · ${have.mana_shard || 0} mana · ${have.astral_core || 0} astral · ${have.gem_catalyst || 0} catalyst`,
+        `🪙 Gold: <b>${esc(String(gold))}</b> · Epic+ relics: <b>${goodN}</b> (need ${legPets * 3} for ${legPets} Legend pets ×3 slots)`,
+        '',
+        ...Object.entries(FORGE).map(([r, f]) => `• <b>${r}</b> — ${f.odds}% success · ${f.cost}`),
+        '',
+        `Default stat: <code>${esc(config.ZOLANA_RELIC_CRAFT_STATS.split(',')[0])}</code> · custom: <code>/relicforge Epic hp_pct</code>`,
+      ];
+      return tg.notify(lines.join('\n'), {
+        reply_markup: {
+          inline_keyboard: [
+            [{ text: '🔨 Rare', callback_data: '/relicforge Rare' }, { text: '🔨 Epic', callback_data: '/relicforge Epic' }, { text: '🔨 Legendary', callback_data: '/relicforge Legendary' }],
+            [{ text: '⬅️ Back', callback_data: '/start' }],
+          ],
+        },
+      });
+    }
+
+    case '/relicenchant': {
+      const player = await client.loadPlayer().catch(() => null);
+      if (!player) return tg.notify('❌ Could not load (game offline?). Try again.', menuMarkup);
+      const rank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+      // Enhance the best equipped relic (rarest, then least-enhanced) with relic_shard.
+      const best = (player.relics || [])
+        .filter((r) => r.equipped_on)
+        .sort((a, b) => (rank[b.rarity] || 0) - (rank[a.rarity] || 0)
+          || (Number(a.enhance_level) || 0) - (Number(b.enhance_level) || 0))[0];
+      const shards = Number((player.materials || []).find((m) => m.material_id === 'relic_shard')?.quantity || 0);
+      if (!best) return tg.notify('⚒️ No equipped relic to enchant yet. Forge + equip one first (/relicforge).', menuMarkup);
+      if (args[0] === 'GO') {
+        const id = best.id || best.relic_id;
+        const res = await client.relicEnhance(id).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`⚒️ Enchant failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        return tg.notify(`⚒️ <b>Enchanted!</b> ${esc(best.rarity)} relic → enhance level up (party power ↑).`, menuMarkup);
+      }
+      return tg.notify([
+        '⚒️ <b>Relic Enchant</b> — spend relic_shard to enhance the best equipped relic.',
+        '',
+        `🎯 Target: <b>${esc(best.rarity)}</b> ${esc(best.slot || '')} (enhance lvl ${best.enhance_level || 0})`,
+        `🔩 relic_shard: <b>${shards}</b>`,
+        '',
+        'Enhancing boosts the relic\'s stat (server-validated cost + cap).',
+      ].join('\n'), {
+        reply_markup: { inline_keyboard: [[{ text: '⚒️ Enchant now', callback_data: '/relicenchant GO' }], [{ text: '⬅️ Back', callback_data: '/start' }]] },
+      });
+    }
+
     case '/epoch': {
       const player = await client.loadPlayer().catch(() => null);
       state.data.cooldowns.epoch = 0;

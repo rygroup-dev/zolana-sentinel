@@ -100,6 +100,16 @@ const schema = z.object({
   ZOLANA_AUTO_RELIC: z.coerce.boolean().default(true),
   ZOLANA_RELIC_TARGET: z.coerce.number().int().min(0).default(3),
   ZOLANA_RELIC_CRAFT_GOLD_FLOOR: z.coerce.number().int().min(0).default(45000),
+  // Combat-relic forge (POST /api/relic/craft-combat {rarity, stat}). Only equip
+  // relics on creatures of this rarity+ (default Legendary → only Legendary pets
+  // get relics). 3 combat slots/pet (combat_a/b/c). Craft Epic combat relics to
+  // fill/upgrade those slots (no gem_catalyst needed); Legendary only when catalyst
+  // is already in inventory (never auto-buys). Best combat stats crafted in order.
+  ZOLANA_RELIC_EQUIP_MIN_RARITY: z.string().default('Legendary'),
+  ZOLANA_RELIC_CRAFT_RARITY: z.string().default('Epic'),
+  ZOLANA_RELIC_CRAFT_PER_CYCLE: z.coerce.number().int().min(0).max(6).default(2),
+  ZOLANA_RELIC_CRAFT_STATS: z.string().default('attack_pct,hp_pct,crit_dmg'),
+  ZOLANA_RELIC_LEGENDARY_WHEN_CATALYST: z.coerce.boolean().default(true),
   // Epoch: donate surplus gold/materials during a funding window for a $ZOLANA
   // rebate (not level-gated). Only fires when donation is actually open.
   ZOLANA_AUTO_EPOCH: z.coerce.boolean().default(true),
