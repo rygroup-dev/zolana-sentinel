@@ -322,13 +322,6 @@ function saleKey(item) {
   return item.item_kind || 'unknown';
 }
 
-function byWeakestCreature(a, b) {
-  const rarityScore = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
-  return Number(rarityScore[a.rarity] || 0) - Number(rarityScore[b.rarity] || 0)
-    || Number(a.level || 0) - Number(b.level || 0)
-    || Number(a.creature_xp || 0) - Number(b.creature_xp || 0);
-}
-
 export class StrategyEngine {
   constructor(client, state) {
     this.client = client;
@@ -721,7 +714,7 @@ export class StrategyEngine {
     if (!this.state.ready('companion')) return;
     const strongest = creatures(player)
       .filter((c) => c.id && !c.stored && !c.listed)
-      .sort((a, b) => byWeakestCreature(b, a))[0]; // strongest first
+      .sort((a, b) => battlePower(b) - battlePower(a))[0]; // strongest by battle power
     if (!strongest?.id) return;
     if (actor(player).equipped_creature === strongest.id) {
       this.state.cooldown('companion', 6 * 60 * 60 * 1000);
@@ -846,7 +839,7 @@ export class StrategyEngine {
     // unequipped relic onto a party creature — rarest first — so party power grows.
     const party = creatures(player)
       .filter((c) => c.id && !c.stored && !c.listed)
-      .sort((a, b) => byWeakestCreature(b, a)); // strongest first
+      .sort((a, b) => battlePower(b) - battlePower(a)); // strongest by battle power
     const rank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
     const combat = (r) => (r.class === 'combat' ? 1 : 0);
     // Equip the best relics first: COMBAT-class (raw party power, enhanceable ×3) before
@@ -1089,7 +1082,11 @@ export class StrategyEngine {
 
     let pool = creatures(player)
       .filter((c) => c.id && !c.run_id && !c.listed && !c.stored && !c.bound)
-      .sort((a, b) => byWeakestCreature(b, a)); // strongest first
+      // Strongest by true battle power (rarity × variant × STAGE × level) — not rarity
+      // alone — so a low-stage high-rarity creature (e.g. a Baby Legendary) doesn't push
+      // a stronger Elder Epic out of the top raid party. Recomputed live every cycle, so
+      // the party auto-updates the moment a creature levels/evolves or a new one arrives.
+      .sort((a, b) => battlePower(b) - battlePower(a));
 
     const startParty = async (target, trio) => {
       // A creature is placed XOR raiding — unplace any farmers we're drafting into a raid.
@@ -1174,7 +1171,7 @@ export class StrategyEngine {
     );
     const party = creatures(player)
       .filter((c) => c.id && !c.run_id && !c.listed && !c.stored && !farmers.has(c.id))
-      .sort((a, b) => byWeakestCreature(b, a))
+      .sort((a, b) => battlePower(b) - battlePower(a))
       .slice(0, 3)
       .map((c) => c.id);
     if (party.length < 3) { this.state.cooldown('dungeon', DUNGEON_COOLDOWN_MS); return; }
