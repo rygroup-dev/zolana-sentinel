@@ -730,7 +730,8 @@ async function handleCommand(command, tg, engine, state) {
         '<b>💎 GEMS</b>',
         '━━━━━━━━━━━━━━━━━━━━',
         gems != null ? `Your balance: <b>${esc(gems)}</b> gems` : '',
-        gems != null && bound > 0 ? `🔓 Sellable: <b>${sellable}</b>  ·  🔒 Bound: <b>${bound}</b> <i>(holder stipend — can't sell)</i>` : '',
+        gems != null && bound > 0 ? `🔓 Tradeable: <b>${sellable}</b>  ·  🔒 Soulbound: <b>${bound}</b> <i>(stipend/starter — spend-only, can't sell)</i>` : '',
+        bound > 0 ? '<i>💡 Soulbound gems: spend on gacha/cosmetics. Items pulled with them can be made tradeable for 10k $ZOLANA each.</i>' : '',
         'Buy gems with $ZOLANA, or sell your spare gems on the market.',
       ].filter(Boolean).join('\n'), {
         reply_markup: { inline_keyboard: [
@@ -1392,10 +1393,10 @@ function esc(value) {
 const RARITY_BASE = { Common: 10, Uncommon: 40, Rare: 200, Epic: 1200, Legendary: 5000, Mythical: 25000 };
 const VARIANT_MULT = { Normal: 1, Shiny: 2, Golden: 5, Shadow: 7, Rainbow: 15 };
 const RARITY_EMOJI2 = { Common: '⚪', Uncommon: '🟢', Rare: '🔵', Epic: '🟣', Legendary: '🟡', Mythical: '🔴' };
-// Gem-craft recipe for the /gemcraft checklist. gem_catalyst is 10 (server-confirmed live
-// "Need 10"; the cached bundle said 5). The manual Craft button still surfaces the exact
+// Gem-craft recipe for the /gemcraft checklist — v0.18 values (RE'd from live chunk 5268,
+// confirmed live: 10 catalyst + 200k gold). The manual Craft button still surfaces the exact
 // server response, so this stays correct even if amounts change again.
-const GEMCRAFT_REQ = { gem_catalyst: 10, glimmer_dust: 50, mana_shard: 25, astral_core: 10, gold: 90000 };
+const GEMCRAFT_REQ = { gem_catalyst: 10, glimmer_dust: 100, mana_shard: 50, astral_core: 20, gold: 200000 };
 function creatureValue(c) {
   return (RARITY_BASE[c.rarity] || 10) * (VARIANT_MULT[c.variant] || 1) * (1 + 0.015 * ((c.level || 1) - 1));
 }
