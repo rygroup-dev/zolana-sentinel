@@ -268,7 +268,7 @@ async function handleCommand(command, tg, engine, state) {
         await tg.notify('⚔️ Finding an opponent…');
         const res = await client.pvpMatch().catch((e) => ({ error: e.message }));
         if (res?.error) return tg.notify(`⚔️ Attack failed: <code>${esc(res.error)}</code>`, menuMarkup);
-        const won = res?.pvp?.result === 'win' || res?.won === true;
+        const won = (res?.outcome || res?.pvp?.outcome) === 'win'; // server field = outcome
         state.count('pvp'); state.save();
         return tg.notify(`⚔️ <b>${won ? '🏆 VICTORY' : 'Battle done'}</b> — ${tickets - 1}🎟️ left.`, { reply_markup: { inline_keyboard: [[{ text: `⚔️ Attack again (${tickets - 1}🎟️)`, callback_data: '/pvp attack' }], [{ text: '⬅️ PvP', callback_data: '/pvp' }]] } });
       }

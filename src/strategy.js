@@ -1323,7 +1323,8 @@ export class StrategyEngine {
       const result = await this.safeAct('pvpMatch', () => this.client.pvpMatch());
       if (!result) break; // no ticket / action budget hit / server reject
       fought += 1;
-      const won = result?.pvp?.result === 'win' || result?.won === true;
+      const won = (result?.outcome || result?.pvp?.outcome) === 'win'; // server field = outcome
+
       if (won) wins += 1;
       this.state.data.lastPvp = { at: new Date().toISOString(), won, result: result.pvp || result };
     }
