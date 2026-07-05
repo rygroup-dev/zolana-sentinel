@@ -86,6 +86,9 @@ const schema = z.object({
   ZOLANA_AUTO_BREED: z.coerce.boolean().default(true),
   ZOLANA_AUTO_GACHA: z.coerce.boolean().default(true),
   ZOLANA_AUTO_PVP: z.coerce.boolean().default(true),
+  // Max PvP attacks per cycle — drains banked tickets (cap 10, regen ~2.4h) faster than
+  // 1/cooldown without blowing the action budget.
+  ZOLANA_PVP_MAX_PER_CYCLE: z.coerce.number().int().min(1).max(10).default(3),
   ZOLANA_AUTO_SLOTS: z.coerce.boolean().default(true),
   ZOLANA_TARGET_PLACED: z.coerce.number().int().min(1).default(6),
   // Evolve keeps at least this much gold in reserve (so leveling quests like

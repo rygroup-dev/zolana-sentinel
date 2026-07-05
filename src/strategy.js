@@ -1316,14 +1316,19 @@ export class StrategyEngine {
       this.state.cooldown('pvpTeam', 6 * 60 * 60 * 1000);
     }
 
-    // Attack only when a ticket is available.
-    if (tickets >= 1) {
+    // Attack with up to N tickets this cycle (drains the banked stack faster than 1/cooldown).
+    const budget = Math.min(tickets, config.ZOLANA_PVP_MAX_PER_CYCLE);
+    let wins = 0; let fought = 0;
+    for (let i = 0; i < budget; i += 1) {
       const result = await this.safeAct('pvpMatch', () => this.client.pvpMatch());
-      if (result) {
-        const won = result?.pvp?.result === 'win' || result?.won === true;
-        this.state.data.lastPvp = { at: new Date().toISOString(), won, result: result.pvp || result };
-        this.queueNotify({ text: `⚔️ <b>PvP ${won ? '🏆 WON' : 'done'}</b> — tier ${pvp?.me?.tier || '-'} · rank ${pvp?.me?.rank ?? '-'}` });
-      }
+      if (!result) break; // no ticket / action budget hit / server reject
+      fought += 1;
+      const won = result?.pvp?.result === 'win' || result?.won === true;
+      if (won) wins += 1;
+      this.state.data.lastPvp = { at: new Date().toISOString(), won, result: result.pvp || result };
+    }
+    if (fought) {
+      this.queueNotify({ text: `⚔️ <b>PvP</b> — ${wins}/${fought} won · tier ${pvp?.me?.tier || '-'} · rank ${pvp?.me?.rank ?? '-'}` });
     }
   }
 

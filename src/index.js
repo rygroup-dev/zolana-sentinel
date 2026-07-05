@@ -244,12 +244,52 @@ async function handleCommand(command, tg, engine, state) {
     }
 
     case '/pvp': {
-      await tg.notify('⚔️ Finding a PvP opponent…');
-      const res = await client.pvpMatch().catch((e) => ({ error: e.message }));
-      const pvp = res?.pvp || res;
-      if (res?.error) return tg.notify(`⚔️ PvP failed: <code>${res.error}</code>`, menuMarkup);
-      const won = pvp?.result === 'win' || pvp?.won === true;
-      return tg.notify(`⚔️ <b>PvP ${won ? '🏆 WON' : 'done'}</b>\n<code>${esc(JSON.stringify(pvp).slice(0, 300))}</code>`, menuMarkup);
+      // PvP needs a 3-Elder lineup (server rule). Panel: status + set team + attack.
+      const rankMap = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+      const pvp = await client.pvp().catch((e) => ({ error: e.message }));
+      if (pvp?.error) return tg.notify(`⚔️ PvP load failed: <code>${esc(pvp.error)}</code>`, menuMarkup);
+      const me = pvp?.me || {};
+      const player = await client.loadPlayer().catch(() => null);
+      const elders = (player?.creatures || [])
+        .filter((c) => c.stage === 'Elder' && !c.listed && !c.stored)
+        .sort((a, b) => (rankMap[b.rarity] || 0) - (rankMap[a.rarity] || 0) || (b.level || 0) - (a.level || 0));
+      const tickets = Number(me.tickets ?? 0);
+      const teamSet = Number(me.power || 0) > 0 || (me.teamDisplay || []).length >= 3;
+
+      if (args[0] === 'team') {
+        if (elders.length < 3) return tg.notify(`⚔️ Need <b>3</b> Elders — you have <b>${elders.length}</b>.`, menuMarkup);
+        const team = elders.slice(0, 3).map((c, idx) => ({ rowId: c.id, formation: idx === 1 ? 'front' : 'back' }));
+        const res = await client.pvpTeam(team).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`⚔️ Set team failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        return tg.notify(`⚔️ <b>Team set!</b> ${esc(elders.slice(0, 3).map((c) => c.creature_id).join(', '))} — center = FRONT tank. Also your defense team (passive points when attackers lose).`, { reply_markup: { inline_keyboard: [[{ text: '⚔️ Attack now', callback_data: '/pvp attack' }], [{ text: '⬅️ PvP', callback_data: '/pvp' }]] } });
+      }
+      if (args[0] === 'attack') {
+        if (tickets < 1) return tg.notify(`⚔️ No tickets — +1 in ~${Math.round((me.regenMs || 8640000) / 3600000)}h.`, menuMarkup);
+        await tg.notify('⚔️ Finding an opponent…');
+        const res = await client.pvpMatch().catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`⚔️ Attack failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        const won = res?.pvp?.result === 'win' || res?.won === true;
+        state.count('pvp'); state.save();
+        return tg.notify(`⚔️ <b>${won ? '🏆 VICTORY' : 'Battle done'}</b> — ${tickets - 1}🎟️ left.`, { reply_markup: { inline_keyboard: [[{ text: `⚔️ Attack again (${tickets - 1}🎟️)`, callback_data: '/pvp attack' }], [{ text: '⬅️ PvP', callback_data: '/pvp' }]] } });
+      }
+
+      const lines = [
+        '⚔️ <b>PvP ARENA</b>',
+        '━━━━━━━━━━━━━━━━━━━━',
+        `🏅 Tier: <b>${esc(me.tier || '-')}</b> · Rank <b>#${me.rank ?? '-'}</b> · Points <b>${me.points ?? 0}</b>`,
+        `📊 W-L: <b>${me.wins ?? 0}</b>–<b>${me.losses ?? 0}</b> · Defense wins ${me.defenseWins ?? 0}`,
+        `🎟️ Tickets: <b>${tickets}/${me.ticketCap ?? 10}</b> (regen ~${Math.round((me.regenMs || 8640000) / 3600000)}h each)`,
+        `👥 Team: ${teamSet ? `✅ set (power ${me.power || 0})` : '❌ <b>not set</b>'}`,
+        '',
+        elders.length >= 3
+          ? `🐉 <b>${elders.length}</b> Elders ready — top 3: ${esc(elders.slice(0, 3).map((c) => `${c.creature_id} L${c.level}`).join(', '))}`
+          : `⚠️ <b>Need 3 Elders</b> to compete — you have <b>${elders.length}</b>. Auto-evolve is pushing your strongest toward Elder.`,
+      ];
+      const rows = [];
+      if (elders.length >= 3) rows.push([{ text: teamSet ? '👥 Update Team' : '👥 Set Team', callback_data: '/pvp team' }]);
+      if (teamSet && tickets >= 1) rows.push([{ text: `⚔️ Attack (${tickets}🎟️)`, callback_data: '/pvp attack' }]);
+      rows.push([{ text: '🔄 Refresh', callback_data: '/pvp' }, { text: '🏠 Home', callback_data: '/start' }]);
+      return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
     }
 
     case '/dungeon': {
