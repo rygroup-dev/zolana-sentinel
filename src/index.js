@@ -502,8 +502,19 @@ async function handleCommand(command, tg, engine, state) {
       const have = Object.fromEntries((player.materials || []).map((m) => [m.material_id, Number(m.quantity || 0)]));
       have.gold = Number((player.player || {}).gold || 0);
       const gems = Number((player.player || {}).gems || 0);
+      // v0.18: gem-making is tier-gated by $ZOLANA held — Newcomer 3 / Holder 10 / Patron 100 / Whale ∞ per period.
+      let tierLine = '';
+      try {
+        const t = (await client.epoch())?.claimTier;
+        if (t) {
+          const capStr = t.cap == null ? '∞ (unlimited)' : String(t.cap);
+          tierLine = `🏅 Tier: <b>${esc(t.label)}</b> — limit <b>${capStr}</b> · holding ${Number(t.zenko || 0).toLocaleString('en-US')} $ZOLANA`;
+        }
+      } catch { /* best-effort */ }
       const LABEL = { gem_catalyst: '💠 Gem Catalyst', glimmer_dust: '✨ Glimmer Dust', mana_shard: '🔷 Mana Shard', astral_core: '🌟 Astral Core', gold: '🪙 Gold' };
-      const lines = ['<b>💠 GEM CRAFT</b> → makes <b>1</b> 💎 gem', '━━━━━━━━━━━━━━━━━━━━', '<b>Requirements:</b>'];
+      const lines = ['<b>💠 GEM CRAFT</b> → makes <b>1</b> 💎 gem', '━━━━━━━━━━━━━━━━━━━━'];
+      if (tierLine) lines.push(tierLine, '');
+      lines.push('<b>Requirements:</b>');
       let allOk = true;
       for (const [k, need] of Object.entries(GEMCRAFT_REQ)) {
         const has = have[k] || 0; const ok = has >= need; if (!ok) allOk = false;
