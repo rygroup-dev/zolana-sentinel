@@ -11,6 +11,9 @@ const schema = z.object({
   // Randomize the loop interval ±this so cycles never fire on a robotic fixed clock.
   ZOLANA_LOOP_JITTER_MS: z.coerce.number().int().min(0).default(45_000),
   ZOLANA_MIN_ACTION_GAP_MS: z.coerce.number().int().min(500).default(1500),
+  // Read (GET) pacing — much smaller than the write gap so Telegram commands (which each
+  // load fresh game state) respond fast. Reads are low ban-risk vs write spam.
+  ZOLANA_READ_GAP_MS: z.coerce.number().int().min(0).default(250),
   // Random extra delay (0..this) added to every request so pacing looks human.
   ZOLANA_ACTION_JITTER_MS: z.coerce.number().int().min(0).default(1200),
   ZOLANA_MAX_ACTIONS_PER_CYCLE: z.coerce.number().int().min(1).max(50).default(12),

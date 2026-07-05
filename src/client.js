@@ -21,8 +21,13 @@ export class ZolanaClient {
     }
 
     // Human-like pacing: fixed gap + random jitter so requests never fire on a robotic
-    // fixed cadence.
-    const gap = config.ZOLANA_MIN_ACTION_GAP_MS + Math.floor(Math.random() * config.ZOLANA_ACTION_JITTER_MS);
+    // fixed cadence. READS (GET) use a much smaller gap — they're low ban-risk (a human
+    // browsing fires reads quickly) and this is what makes Telegram commands feel snappy;
+    // WRITES keep the full anti-ban gap.
+    const isRead = method === 'GET';
+    const baseGap = isRead ? config.ZOLANA_READ_GAP_MS : config.ZOLANA_MIN_ACTION_GAP_MS;
+    const jitter = isRead ? Math.floor(config.ZOLANA_ACTION_JITTER_MS / 4) : config.ZOLANA_ACTION_JITTER_MS;
+    const gap = baseGap + Math.floor(Math.random() * jitter);
     const wait = Math.max(0, gap - (Date.now() - this.lastRequestAt));
     if (wait > 0) await sleep(wait);
     this.lastRequestAt = Date.now();
