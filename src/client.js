@@ -330,6 +330,11 @@ export class ZolanaClient {
     return this.post('/api/breed', { parentA, parentB });
   }
 
+  // v0.18: reset a bred-out creature's breed_count (8/8) back to 0, costs gems by rarity.
+  async breedRenew(creatureId) {
+    return this.post('/api/breed/renew', { creatureId });
+  }
+
   async companion(creatureId) {
     return this.post('/api/creature/companion', { creatureId });
   }

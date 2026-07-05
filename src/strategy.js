@@ -665,6 +665,7 @@ export class StrategyEngine {
 
     const adults = creatures(player)
       .filter((c) => ['Adult', 'Elder'].includes(creatureStage(c)) && !c.listed && !c.stored && !c.run_id)
+      .filter((c) => Number(c.breed_count || 0) < 8) // v0.18: skip bred-out (8/8) creatures
       .filter((c) => {
         const last = Date.parse(c.last_breed_time || '');
         return !Number.isFinite(last) || Date.now() - last >= BREED_COOLDOWN_MS;

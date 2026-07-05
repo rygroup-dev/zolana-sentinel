@@ -346,8 +346,45 @@ async function handleCommand(command, tg, engine, state) {
       for (const c of breedables.slice(0, 8)) {
         rows.push([{ text: `${RARITY_EMOJI2[c.rarity]} ${c.creature_id}(${elementOf(c) || '?'}) ${c.stage} L${c.level}`.slice(0, 58), callback_data: `/bp ${bShort(c.id)}` }]);
       }
+      // v0.18: bred-out creatures (8/8) — offer Renew (gems) to reset the breed count.
+      const bredOut = (player.creatures || []).filter((c) => ['Adult', 'Elder'].includes(c.stage) && isBredOut(c) && !c.listed && !c.stored);
+      if (bredOut.length) {
+        lines.push('', `🔄 <b>Bred-out (8/8):</b> ${bredOut.length} — tap to Renew with gems:`);
+        for (const c of bredOut.slice(0, 5)) {
+          const cost = RENEW_GEM_COST[c.rarity] ?? 5;
+          rows.push([{ text: `🔄 ${RARITY_EMOJI2[c.rarity]} ${c.creature_id} — Renew ${cost}💎`.slice(0, 58), callback_data: `/brenew ${bShort(c.id)}` }]);
+        }
+      }
       rows.push([{ text: '⬅️ Back', callback_data: '/start' }]);
       return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
+    }
+
+    // v0.18 Breed Renew — reset a bred-out (8/8) creature's breed_count for gems.
+    case '/brenew': {
+      const [short8, go] = args;
+      let player;
+      try { player = await client.loadPlayer(); }
+      catch { return tg.notify('❌ Could not load creatures. Try again.', menuMarkup); }
+      const c = findByShort(player, short8);
+      if (!c) return tg.notify('❌ Creature not found. Open /breed.', menuMarkup);
+      const cost = RENEW_GEM_COST[c.rarity] ?? 5;
+      const gems = Number((player.player || {}).gems || 0);
+      if (go === 'GO') {
+        if (gems < cost) return tg.notify(`❌ Need <b>${cost}</b>💎 to renew (you have ${gems}).`, menuMarkup);
+        const res = await client.breedRenew(c.id).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`❌ Renew failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        logHistory(state, `🔄 Renewed ${c.creature_id} breed count (−${cost}💎)`);
+        return tg.notify(`🔄 <b>RENEWED!</b> ${RARITY_EMOJI2[c.rarity]} ${esc(c.creature_id)} breed count reset to 0/8 (−${cost}💎). It can breed again.`, { reply_markup: { inline_keyboard: [[{ text: '🧬 Breed', callback_data: '/breed' }]] } });
+      }
+      return tg.notify([
+        '<b>🔄 BREED RENEW</b>', '━━━━━━━━━━━━━━━━━━━━',
+        `${RARITY_EMOJI2[c.rarity]} <b>${esc(c.creature_id)}</b> ${c.rarity} — breed count <b>${c.breed_count || 0}/8</b>`,
+        `💎 Cost: <b>${cost}</b> gems ${gems >= cost ? '✅' : `❌ (you have ${gems})`}`,
+        'Resets breed count to 0/8 so it can breed again.',
+      ].join('\n'), { reply_markup: { inline_keyboard: [
+        gems >= cost ? [{ text: `🔄 Renew for ${cost}💎`, callback_data: `/brenew ${short8} GO` }] : [{ text: '💠 Get gems (/gemcraft)', callback_data: '/gemcraft' }],
+        [{ text: '⬅️ Back', callback_data: '/breed' }],
+      ] } });
     }
 
     // Pick parent 2 (after parent 1 chosen).
@@ -1417,6 +1454,9 @@ const BREED_TABLE = [
 ];
 const BREED_COOLDOWN_MS_UI = 25 * 60 * 1000; // eC.cooldownSec = 1500s (RE'd) — was wrongly 60m
 const BREED_MIN_HAPPINESS = 50; // eC.minHappiness — a creature below this can't breed
+const BREED_MAX_COUNT = 8; // v0.18: a creature maxes at 8 breeds, then needs Renew (gems)
+const RENEW_GEM_COST = { Common: 2, Uncommon: 3, Rare: 5, Epic: 8, Legendary: 12, Mythical: 20 };
+const isBredOut = (c) => Number(c.breed_count || 0) >= BREED_MAX_COUNT;
 // Species → Element (from the game catalog `en(id,Name,Element,…)`). Breeding is gated by
 // element compatibility AND rarity: Legendary-tier (or higher) creatures can't breed at all.
 const CREATURE_ELEMENT = { abyssling:'Aqua',aquarine:'Aqua',aurelia:'Lux',blazecub:'Ignis',bloomara:'Flora',boulderon:'Terra',brambark:'Flora',breezekit:'Aero',chronovex:'Lux',cindermane:'Ignis',cindle:'Ignis',clovy:'Flora',cobble:'Terra',coralbite:'Aqua',coralisk:'Aqua',cosmium:'Lux',craggle:'Terra',cragroot:'Terra',crystara:'Terra',cyclonix:'Aero',darkspecter:'Void',deltarcha:'Flora',dimble:'Void',divinium:'Lux',dualuxe:'Void',duskee:'Void',eclipsyn:'Lux',elderbark:'Flora',emberle:'Ignis',emberwing:'Ignis',flicky:'Ignis',florix:'Flora',fortaran:'Terra',fuzzrock:'Terra',gaialith:'Terra',gaiamir:'Terra',galestrike:'Aero',geargrove:'Terra',geowarden:'Terra',gleamguard:'Lux',glimra:'Lux',gloopy:'Aqua',gustaria:'Aero',gusty:'Aero',hurricana:'Aero',infernohound:'Ignis',leviath:'Aqua',lotuseer:'Flora',lucentia:'Lux',lumen:'Lux',luminara:'Lux',magmarok:'Ignis',marlance:'Aqua',marshling:'Aqua',megalith:'Terra',mistweaver:'Aero',nightstrider:'Void',nihilarch:'Void',nimbu:'Aero',noctilume:'Void',novaburst:'Ignis',petalbud:'Flora',petrabloom:'Flora',poseidax:'Aqua',prismark:'Lux',pyrewing:'Ignis',pyrexis:'Ignis',pyroglide:'Aero',quartzpup:'Terra',quarzon:'Terra',scorchstorm:'Ignis',seedlup:'Flora',skydrift:'Aero',smoldra:'Ignis',solarknight:'Lux',solivanna:'Lux',solphoenix:'Ignis',splisho:'Aqua',stormray:'Aqua',stratoguard:'Aero',stratosking:'Aero',swampire:'Aqua',sylvorn:'Flora',tectodon:'Terra',tempestus:'Aqua',terragod:'Terra',terraquill:'Terra',terravine:'Flora',thornhelm:'Flora',thornmaw:'Flora',tidalord:'Aqua',tidalserp:'Aqua',tiddles:'Aqua',twilara:'Void',umbraluxis:'Void',umbrance:'Void',umbraxis:'Void',umbrite:'Void',verdania:'Flora',verdantia:'Flora',voidlord:'Void',wishling:'Lux',yggdrasoul:'Flora',zephyrion:'Aero',zephyron:'Aero' };
@@ -1437,6 +1477,7 @@ function elementsCompatible(a, b) {
 function isBreedable(c, now = Date.now()) {
   if (!['Adult', 'Elder'].includes(c.stage)) return false;
   if ((BREED_TIER[c.rarity] ?? 0) >= 4) return false; // Legendary+ can't breed
+  if (isBredOut(c)) return false; // v0.18: 8/8 breeds → bred-out, needs Renew first
   if (c.listed || c.stored || c.run_id) return false;
   if (Number(c.happiness ?? 100) < BREED_MIN_HAPPINESS) return false; // needs happiness ≥ 50
   const last = Date.parse(c.last_breed_time || '');
