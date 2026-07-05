@@ -200,10 +200,14 @@ async function handleCommand(command, tg, engine, state) {
       return tg.notify(tg.formatStatus(state.data.lastPlayer, state.data.market), menuMarkup);
 
     case '/pause':
+    case '/stop':
       state.data.paused = true; state.save();
-      return tg.notify('⏸ Autopilot <b>paused</b>.', menuMarkup);
+      return tg.notify('⏸ Autopilot <b>STOPPED</b> — all actions halted (farm, raid, evolve, relic, market). Safe to play manually on the website. Tap /resume when done.', {
+        reply_markup: { inline_keyboard: [[{ text: '▶️ Resume bot', callback_data: '/resume' }], [{ text: '🏠 Home', callback_data: '/start' }]] },
+      });
 
     case '/resume':
+    case '/startbot':
       state.data.paused = false;
       state.data.runCycleNow = true; // kick a cycle immediately on resume
       state.save();
