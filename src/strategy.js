@@ -86,9 +86,9 @@ const STAGE_CFG = {
 // → f1≈124, f2≈459, f3≈1002, f5≈2705, f10≈7534, f25≈36k (verified live). Drops
 // glimmer_dust/mana_shard/astral_core/gem_catalyst + gold.
 const GEMCRAFT_GOLD_COST = 90000; // server-validated cost of one gem_catalyst craft
-// Full gem-craft recipe (RE'd from bundle `eX`, 2026-07-05): 1 gem consumes ALL of these.
-// The old code only checked gem_catalyst+gold and would 400 when the other mats ran low.
-const GEMCRAFT_RECIPE = { glimmer_dust: 50, mana_shard: 25, astral_core: 10, gem_catalyst: 5, gold: 90000 };
+// Full gem-craft recipe. gem_catalyst was BUMPED 5→10 server-side (live 402 "Need 10 gem
+// catalyst"; the Jul-2 bundle `eX` still said 5). Other amounts unconfirmed-changed but kept.
+const GEMCRAFT_RECIPE = { glimmer_dust: 50, mana_shard: 25, astral_core: 10, gem_catalyst: 10, gold: 90000 };
 const REGION_STAMINA = [6, 8, 10, 14, 18];
 const REGION_NAMES = ['Meadow Hollows', 'Tidal Caverns', 'Ember Depths', 'Shadow Reach', 'Celestial Spire'];
 const DUNGEONS = Array.from({ length: 25 }, (_, i) => {

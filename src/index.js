@@ -461,10 +461,34 @@ async function handleCommand(command, tg, engine, state) {
 
     case '/gemcraft': {
       const player = await client.loadPlayer().catch(() => null);
-      state.data.cooldowns.gemcraft = 0;
-      await engine.gemCraftAuto(player);
-      const cat = (player?.materials || []).find((m) => m.material_id === 'gem_catalyst');
-      return tg.notify(`💠 Gem craft processed (needs 5 gem_catalyst from dungeon floor 2+). Have: <b>${esc(cat?.quantity ?? 0)}</b>.`, menuMarkup);
+      if (!player) return tg.notify('❌ Could not load (game offline?). Try again.', menuMarkup);
+      const have = Object.fromEntries((player.materials || []).map((m) => [m.material_id, Number(m.quantity || 0)]));
+      have.gold = Number((player.player || {}).gold || 0);
+      const gems = Number((player.player || {}).gems || 0);
+      const LABEL = { gem_catalyst: '💠 Gem Catalyst', glimmer_dust: '✨ Glimmer Dust', mana_shard: '🔷 Mana Shard', astral_core: '🌟 Astral Core', gold: '🪙 Gold' };
+      const lines = ['<b>💠 GEM CRAFT</b> → makes <b>1</b> 💎 gem', '━━━━━━━━━━━━━━━━━━━━', '<b>Requirements:</b>'];
+      let allOk = true;
+      for (const [k, need] of Object.entries(GEMCRAFT_REQ)) {
+        const has = have[k] || 0; const ok = has >= need; if (!ok) allOk = false;
+        lines.push(`${ok ? '✅' : '❌'} ${LABEL[k]}: <b>${has.toLocaleString('en-US')}</b> / ${need.toLocaleString('en-US')}`);
+      }
+
+      if (args[0] === 'GO') {
+        if (!allOk) return tg.notify([...lines, '', '❌ <b>Not enough materials</b> — craft blocked.'].join('\n'), menuMarkup);
+        state.data.cooldowns.gemcraft = 0;
+        const res = await client.gemCraft().catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify([...lines, '', `❌ <b>Craft failed:</b> <code>${esc(res.error)}</code>`].join('\n'), menuMarkup);
+        logHistory(state, '💠 Crafted 1 gem (manual)');
+        return tg.notify(`💠 <b>GEM CRAFTED!</b> ✅\n+1 💎 → now <b>${gems + 1}</b> gems.`, menuMarkup);
+      }
+
+      lines.push('', allOk
+        ? '✅ <b>All set — ready to craft!</b>'
+        : '❌ <b>Missing materials.</b> 💠 gem_catalyst only drops from raiding <b>dungeon floor 2+</b>.');
+      const rows = [];
+      if (allOk) rows.push([{ text: '💠 Craft Now (1 gem)', callback_data: '/gemcraft GO' }]);
+      rows.push([{ text: '🔄 Refresh', callback_data: '/gemcraft' }, { text: '⬅️ Back', callback_data: '/start' }]);
+      return tg.notify(lines.join('\n'), { reply_markup: { inline_keyboard: rows } });
     }
 
     case '/inventory':
@@ -1368,6 +1392,10 @@ function esc(value) {
 const RARITY_BASE = { Common: 10, Uncommon: 40, Rare: 200, Epic: 1200, Legendary: 5000, Mythical: 25000 };
 const VARIANT_MULT = { Normal: 1, Shiny: 2, Golden: 5, Shadow: 7, Rainbow: 15 };
 const RARITY_EMOJI2 = { Common: '⚪', Uncommon: '🟢', Rare: '🔵', Epic: '🟣', Legendary: '🟡', Mythical: '🔴' };
+// Gem-craft recipe for the /gemcraft checklist. gem_catalyst is 10 (server-confirmed live
+// "Need 10"; the cached bundle said 5). The manual Craft button still surfaces the exact
+// server response, so this stays correct even if amounts change again.
+const GEMCRAFT_REQ = { gem_catalyst: 10, glimmer_dust: 50, mana_shard: 25, astral_core: 10, gold: 90000 };
 function creatureValue(c) {
   return (RARITY_BASE[c.rarity] || 10) * (VARIANT_MULT[c.variant] || 1) * (1 + 0.015 * ((c.level || 1) - 1));
 }
