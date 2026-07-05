@@ -258,6 +258,7 @@ export class TelegramBot {
       { command: 'relic', description: '💍 Auto craft+equip relic' },
       { command: 'relicforge', description: '🔨 Forge combat relic (pick rarity+stat)' },
       { command: 'relicenchant', description: '⚒️ Enhance best equipped relic' },
+      { command: 'relicrecycle', description: '♻️ Bulk-recycle spare relics (Rare↓) → shard' },
       { command: 'epoch', description: '🌌 Epoch donate → $ZOLANA rebate' },
       { command: 'inventory', description: '🎒 Bag: creatures/eggs/relics/materials' },
       { command: 'creature', description: '🐉 Creature list: name, rarity, gold/h' },

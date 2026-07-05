@@ -462,6 +462,12 @@ export class ZolanaClient {
     return this.post('/api/relic/reroll', { relicId, mode });
   }
 
+  // Bulk-recycle many relics at once into relic_shard (permanent). Yields per rarity:
+  // Uncommon/Rare 2-4, Epic 5-8 (+glimmer), Legendary 10-14 (+gem_catalyst), Mythical 0.
+  async relicRecycle(relicIds) {
+    return this.post('/api/relic/recycle', { relicIds });
+  }
+
   // Break a relic into relic_shard (permanent) — fuel for enhancing the good ones.
   async relicDismantle(relicId) {
     return this.post('/api/relic/dismantle', { relicId });

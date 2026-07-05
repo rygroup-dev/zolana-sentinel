@@ -563,6 +563,37 @@ async function handleCommand(command, tg, engine, state) {
       });
     }
 
+    case '/relicrecycle': {
+      const player = await client.loadPlayer().catch(() => null);
+      if (!player) return tg.notify('❌ Could not load (game offline?). Try again.', menuMarkup);
+      const rank = { Common: 1, Uncommon: 2, Rare: 3, Epic: 4, Legendary: 5, Mythical: 6 };
+      // Recyclable = Rare and BELOW, unequipped, not listed/stored/bound. Epic+ protected.
+      const recyclable = (player.relics || []).filter((r) => (rank[r.rarity] || 0) <= 3
+        && !r.equipped_on && !r.listed && !r.stored && !r.bound && !r.soulbound);
+      if (!recyclable.length) return tg.notify('♻️ Nothing to recycle — no spare Rare-or-below relics (Epic+ are protected).', menuMarkup);
+      const ids = recyclable.map((r) => r.id || r.relic_id).filter(Boolean);
+      if (args[0] === 'GO') {
+        const res = await client.relicRecycle(ids).catch((e) => ({ error: e.message }));
+        if (res?.error) return tg.notify(`♻️ Recycle failed: <code>${esc(res.error)}</code>`, menuMarkup);
+        const got = Number(res?.relic_shard || res?.shards || res?.gained?.relic_shard || 0);
+        return tg.notify(`♻️ <b>Recycled ${ids.length} relic${ids.length > 1 ? 's' : ''}!</b>${got ? ` → +${got} relic_shard` : ' → relic_shard added'} (free, Epic+ kept).`, menuMarkup);
+      }
+      const byR = {};
+      recyclable.forEach((r) => { byR[r.rarity] = (byR[r.rarity] || 0) + 1; });
+      const lo = ids.length * 2; const hi = ids.length * 4; // 2-4 shards each (Uncommon/Rare)
+      return tg.notify([
+        '♻️ <b>Relic Recycle</b> — bulk-sacrifice spare relics into relic_shard.',
+        '',
+        `Recyclable (Rare & below, unequipped): <b>${ids.length}</b>`,
+        `   ${Object.entries(byR).map(([r, n]) => `${r} ×${n}`).join(' · ')}`,
+        `Est. yield: <b>~${lo}–${hi}</b> relic_shard · Cost: <b>FREE</b>`,
+        '',
+        '🛡️ Epic / Legendary / Mythical + equipped/listed relics are <b>protected</b>.',
+      ].join('\n'), {
+        reply_markup: { inline_keyboard: [[{ text: `♻️ Recycle ${ids.length} now`, callback_data: '/relicrecycle GO' }], [{ text: '⬅️ Back', callback_data: '/start' }]] },
+      });
+    }
+
     case '/epoch': {
       const player = await client.loadPlayer().catch(() => null);
       state.data.cooldowns.epoch = 0;
