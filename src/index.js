@@ -539,7 +539,7 @@ async function handleCommand(command, tg, engine, state) {
         const stat = (batch ? args[2] : args[1]) || config.ZOLANA_RELIC_CRAFT_STATS.split(',')[0];
         const isCraftFail = (res) => res?.success === false || res?.crafted === false || /fail|refund/i.test(JSON.stringify(res));
         if (batch) {
-          const tries = Math.min(10, Math.max(1, Number(batch[1])));
+          const tries = Math.min(25, Math.max(1, Number(batch[1])));
           await tg.notify(`🔨 Forging <b>${esc(rarity)}</b> ${esc(stat)} — up to <b>${tries}×</b> (stops on success, ${FORGE[rarity]?.odds ?? '?'}% each)…`);
           let ok = false; let used = 0;
           for (let i = 0; i < tries; i += 1) {
@@ -572,13 +572,15 @@ async function handleCommand(command, tg, engine, state) {
         ...Object.entries(FORGE).map(([r, f]) => `• <b>${r}</b> — ${f.odds}% success · ${f.cost}`),
         '',
         `Default stat: <code>${esc(config.ZOLANA_RELIC_CRAFT_STATS.split(',')[0])}</code> · custom: <code>/relicforge Epic hp_pct</code>`,
-        '×5 = try up to 5 times, stops on the first success.',
+        '×N = try up to N times, stops on the first success (max 25).',
       ];
       return tg.notify(lines.join('\n'), {
         reply_markup: {
           inline_keyboard: [
             [{ text: '🔨 Rare', callback_data: '/relicforge Rare' }, { text: '🔨 Epic', callback_data: '/relicforge Epic' }, { text: '🔨 Legendary', callback_data: '/relicforge Legendary' }],
             [{ text: '🔨 Rare ×5', callback_data: '/relicforge Rare x5' }, { text: '🔨 Epic ×5', callback_data: '/relicforge Epic x5' }, { text: '🔨 Legend ×5', callback_data: '/relicforge Legendary x5' }],
+            [{ text: 'Epic ×10', callback_data: '/relicforge Epic x10' }, { text: 'Epic ×25', callback_data: '/relicforge Epic x25' }],
+            [{ text: 'Legend ×10', callback_data: '/relicforge Legendary x10' }, { text: 'Legend ×25', callback_data: '/relicforge Legendary x25' }],
             [{ text: '⬅️ Relic menu', callback_data: '/relicmenu' }],
           ],
         },
