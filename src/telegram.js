@@ -194,6 +194,9 @@ export class TelegramBot {
     return {
       inline_keyboard: [
         [
+          row('⚡ REAL-RUN (master)', 'realrun', config.ZOLANA_REAL_RUN),
+        ],
+        [
           row('AFK', 'afk', config.ZOLANA_AUTO_AFK),
           row('Claims', 'claims', config.ZOLANA_AUTO_CLAIMS),
           row('Quests', 'quests', config.ZOLANA_AUTO_QUESTS),

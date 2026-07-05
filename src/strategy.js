@@ -348,6 +348,13 @@ export class StrategyEngine {
     this.state.save();
   }
 
+  // Master live-run switch. Defaults to ZOLANA_REAL_RUN (env), but can be flipped
+  // from Telegram (/auto → REAL-RUN) so a teammate can enable real actions without
+  // editing .env + restarting. When OFF the bot is a pure dry-run (no writes/on-chain).
+  realRun() {
+    return this.toggle('realrun', config.ZOLANA_REAL_RUN);
+  }
+
   targetPlaced() {
     return config.ZOLANA_TARGET_PLACED;
   }
@@ -982,7 +989,7 @@ export class StrategyEngine {
   // the wallet. Real on-chain transfer — only fires with ZOLANA_REAL_RUN.
   async autoBuyStamina(player, stamina) {
     if (!this.toggle('autostamina', config.ZOLANA_AUTO_STAMINA)) return 0;
-    if (!config.ZOLANA_REAL_RUN) return 0;
+    if (!this.realRun()) return 0;
     if (this.actionsThisCycle >= config.ZOLANA_MAX_ACTIONS_PER_CYCLE) return 0;
     if (stamina >= Math.min(...REGION_STAMINA)) return 0; // only when truly drained
     const day = Math.floor(Date.now() / 86400000);
@@ -1122,7 +1129,7 @@ export class StrategyEngine {
     let est = this.state.data.maxPartyPower ?? this.state.data.partyPower ?? null;
     while (pool.length >= 3
       && this.actionsThisCycle < config.ZOLANA_MAX_ACTIONS_PER_CYCLE
-      && config.ZOLANA_REAL_RUN) {
+      && this.realRun()) {
       const target = pickFloor(affordable, est, remStamina);
       if (!target) break; // can't afford even the cheapest floor → stamina is drained
       const trio = pool.slice(0, 3);
@@ -1177,7 +1184,7 @@ export class StrategyEngine {
       : (affordable.find((d) => dungeonReqPower(d.id) <= p) || affordable[affordable.length - 1]));
 
     const tryStart = async (target) => {
-      if (this.actionsThisCycle >= config.ZOLANA_MAX_ACTIONS_PER_CYCLE || !config.ZOLANA_REAL_RUN) return 'skip';
+      if (this.actionsThisCycle >= config.ZOLANA_MAX_ACTIONS_PER_CYCLE || !this.realRun()) return 'skip';
       this.actionsThisCycle += 1;
       try {
         const result = await this.client.dungeonStart(target.id, party);
@@ -1736,7 +1743,7 @@ export class StrategyEngine {
       return null;
     }
     this.actionsThisCycle += 1;
-    if (!config.ZOLANA_REAL_RUN) {
+    if (!this.realRun()) {
       logger.info({ action: name }, 'dry-run action');
       return null;
     }

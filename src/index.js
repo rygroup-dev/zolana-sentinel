@@ -62,8 +62,10 @@ async function main() {
   } while (true);
 }
 
-const AUTO_KEYS = new Set(['afk', 'claims', 'quests', 'dungeon', 'evolve', 'breed', 'gacha', 'premiumEgg', 'gemcraft', 'buyegg', 'autostamina', 'relic', 'relicEnhance', 'relicDismantle', 'companion', 'epoch', 'pvp', 'slots', 'marketBuy', 'marketSell', 'raidnotify']);
+const AUTO_KEYS = new Set(['realrun', 'afk', 'claims', 'quests', 'dungeon', 'evolve', 'breed', 'gacha', 'premiumEgg', 'gemcraft', 'buyegg', 'autostamina', 'relic', 'relicEnhance', 'relicDismantle', 'companion', 'epoch', 'pvp', 'slots', 'marketBuy', 'marketSell', 'raidnotify']);
 const AUTO_DEFAULTS = {
+  realrun: config.ZOLANA_REAL_RUN,
+  raidnotify: config.ZOLANA_RAID_NOTIFY,
   afk: config.ZOLANA_AUTO_AFK,
   claims: config.ZOLANA_AUTO_CLAIMS,
   quests: config.ZOLANA_AUTO_QUESTS,
@@ -225,7 +227,14 @@ async function handleCommand(command, tg, engine, state) {
       if (!AUTO_KEYS.has(key)) return tg.notify('Unknown toggle.');
       const current = engine.toggle(key, AUTO_DEFAULTS[key]);
       engine.setToggle(key, !current);
-      return tg.notify(`⚙️ <b>${key}</b> → ${!current ? '🟢 ON' : '🔴 OFF'}`, {
+      const now = !current;
+      if (key === 'realrun') {
+        const note = now
+          ? '⚡ <b>REAL-RUN → 🟢 ON</b>\nBot sekarang eksekusi aksi beneran (raid, evolve, craft, on-chain). Butuh stamina + creature buat mulai raid.'
+          : '🛑 <b>REAL-RUN → 🔴 OFF</b>\nMode dry-run — bot jalan tapi TIDAK eksekusi apa pun (raid/craft/on-chain di-skip).';
+        return tg.notify(note, { reply_markup: tg.autoKeyboard(engine) });
+      }
+      return tg.notify(`⚙️ <b>${key}</b> → ${now ? '🟢 ON' : '🔴 OFF'}`, {
         reply_markup: tg.autoKeyboard(engine),
       });
     }
